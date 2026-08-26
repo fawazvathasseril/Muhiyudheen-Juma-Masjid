@@ -38,6 +38,10 @@ const navigate = useNavigate();
         now.getMonth() + 1
       ).padStart(2, "0")}`
     );
+    const [selectedYear, setSelectedYear] =
+  useState(
+    String(now.getFullYear())
+  );
 
 
   /* ========================================
@@ -1415,15 +1419,18 @@ async function runTransactionImport() {
       /* FUNDS */
 
       supabase
-        .from("funds")
-        .select(`
-          id,
-          name,
-          description,
-          is_active
-        `)
-        .order("name"),
+  .from("funds")
+  .select(`
+    id,
+    name,
+    description,
+    is_active,
+    fund_type,
+    include_in_masjid_totals
+  `)
+  .order("name"),
 
+  
 
       /* TRANSACTIONS */
 
@@ -1744,15 +1751,181 @@ async function runTransactionImport() {
   ======================================== */
 
   const openingBalance =
-    useMemo(() => {
+  useMemo(() => {
 
-      return transactions
-        .filter(
-          (transaction) =>
-            transaction.transaction_date <
-            period.start
-        )
-        .reduce(
+    return transactions
+      .filter(
+        (transaction) =>
+          transaction.transaction_date <
+            period.start &&
+          funds.find(
+            (fund) =>
+              fund.id ===
+              transaction.fund_id
+          )?.include_in_masjid_totals !== false
+      )
+      .reduce(
+        (
+          total,
+          transaction
+        ) => {
+
+          const amount =
+            Number(
+              transaction.amount
+            );
+
+          return transaction.type ===
+            "income"
+            ? total + amount
+            : total - amount;
+
+        },
+        0
+      );
+
+  }, [
+    transactions,
+    funds,
+    period,
+  ]);
+
+  /* ========================================
+     TOTAL INCOME
+  ======================================== */
+
+  const totalIncome =
+  useMemo(() => {
+
+    return monthlyTransactions
+      .filter(
+        (transaction) =>
+          transaction.type ===
+          "income"
+      )
+      .reduce(
+        (
+          total,
+          transaction
+        ) =>
+          total +
+          Number(
+            transaction.amount
+          ),
+        0
+      );
+
+  }, [
+    monthlyTransactions,
+  ]);
+
+  /* ========================================
+     TOTAL EXPENSES
+  ======================================== */
+
+  const totalExpenses =
+  useMemo(() => {
+
+    return monthlyTransactions
+      .filter(
+        (transaction) =>
+          transaction.type ===
+            "expense" &&
+          funds.find(
+            (fund) =>
+              fund.id ===
+              transaction.fund_id
+          )?.include_in_masjid_totals !== false
+      )
+      .reduce(
+        (
+          total,
+          transaction
+        ) =>
+          total +
+          Number(
+            transaction.amount
+          ),
+        0
+      );
+
+  }, [
+    monthlyTransactions,
+    funds,
+  ]);
+
+  /* ========================================
+   CLOSING BALANCE
+======================================== */
+
+const closingBalance =
+  openingBalance +
+  totalIncome -
+  totalExpenses;
+/* ========================================
+   YEARLY MONTHLY BALANCE REGISTER
+======================================== */
+
+const monthlyBalanceRegister =
+  useMemo(() => {
+
+    const year =
+      Number(selectedYear);
+
+    const rows = [];
+
+
+    for (
+      let month = 1;
+      month <= 12;
+      month++
+    ) {
+
+      const monthStart =
+        new Date(
+          year,
+          month - 1,
+          1
+        );
+
+      const monthEnd =
+        new Date(
+          year,
+          month,
+          0
+        );
+
+
+      const startString =
+        monthStart
+          .toISOString()
+          .split("T")[0];
+
+      const endString =
+        monthEnd
+          .toISOString()
+          .split("T")[0];
+
+
+      const beforeMonth =
+  transactions.filter(
+    (transaction) =>
+      transaction.transaction_date <
+        startString &&
+      funds.find(
+        (fund) =>
+          fund.id ===
+          transaction.fund_id
+      )?.include_in_masjid_totals !== false
+  );
+
+      /*
+       * Opening balance is the complete
+       * financial balance before this month.
+       */
+
+      const opening =
+        beforeMonth.reduce(
           (
             total,
             transaction
@@ -1768,232 +1941,349 @@ async function runTransactionImport() {
               "income"
               ? total + amount
               : total - amount;
+
           },
           0
         );
 
-    }, [
-      transactions,
-      period,
-    ]);
+
+      const monthTransactions =
+  transactions.filter(
+    (transaction) =>
+      transaction.transaction_date >=
+        startString &&
+      transaction.transaction_date <=
+        endString &&
+      funds.find(
+        (fund) =>
+          fund.id ===
+          transaction.fund_id
+      )?.include_in_masjid_totals !== false
+  );
 
 
+      const income =
+        monthTransactions
+          .filter(
+            (transaction) =>
+              transaction.type ===
+              "income"
+          )
+          .reduce(
+            (
+              total,
+              transaction
+            ) =>
+              total +
+              Number(
+                transaction.amount
+              ),
+            0
+          );
+
+
+      const expenses =
+        monthTransactions
+          .filter(
+            (transaction) =>
+              transaction.type ===
+              "expense"
+          )
+          .reduce(
+            (
+              total,
+              transaction
+            ) =>
+              total +
+              Number(
+                transaction.amount
+              ),
+            0
+          );
+
+
+      const closing =
+        opening +
+        income -
+        expenses;
+
+
+      rows.push({
+        month,
+
+        monthValue:
+          `${year}-${String(
+            month
+          ).padStart(2, "0")}`,
+
+        monthLabel:
+          monthStart.toLocaleDateString(
+            "en-IN",
+            {
+              month: "long",
+            }
+          ),
+
+        opening,
+
+        income,
+
+        expenses,
+
+        closing,
+      });
+
+
+    }
+
+
+    return rows;
+
+  }, [
+  transactions,
+  funds,
+  selectedYear,
+]);
   /* ========================================
-     TOTAL INCOME
-  ======================================== */
+   FUND-WISE MONTHLY REPORT
+======================================== */
 
-  const totalIncome =
-    useMemo(() => {
+const fundReport =
+  useMemo(() => {
 
-      return monthlyTransactions
-        .filter(
-          (transaction) =>
-            transaction.type ===
-            "income"
-        )
-        .reduce(
-          (
-            total,
-            transaction
-          ) =>
-            total +
-            Number(
-              transaction.amount
-            ),
-          0
-        );
+    return funds
+      .filter(
+        (fund) =>
+          fund.is_active &&
+          fund.include_in_masjid_totals !== false
+      )
+      .map(
+        (fund) => {
 
-    }, [
-      monthlyTransactions,
-    ]);
+          const beforePeriod =
+            transactions.filter(
+              (transaction) =>
+                transaction.fund_id ===
+                  fund.id &&
+                transaction.transaction_date <
+                  period.start
+            );
 
 
-  /* ========================================
-     TOTAL EXPENSES
-  ======================================== */
-
-  const totalExpenses =
-    useMemo(() => {
-
-      return monthlyTransactions
-        .filter(
-          (transaction) =>
-            transaction.type ===
-            "expense"
-        )
-        .reduce(
-          (
-            total,
-            transaction
-          ) =>
-            total +
-            Number(
-              transaction.amount
-            ),
-          0
-        );
-
-    }, [
-      monthlyTransactions,
-    ]);
+          const monthly =
+            monthlyTransactions.filter(
+              (transaction) =>
+                transaction.fund_id ===
+                fund.id
+            );
 
 
-  /* ========================================
-     CLOSING BALANCE
-  ======================================== */
+          const opening =
+            beforePeriod.reduce(
+              (
+                total,
+                transaction
+              ) => {
 
-  const closingBalance =
-    openingBalance +
-    totalIncome -
-    totalExpenses;
+                const amount =
+                  Number(
+                    transaction.amount
+                  );
+
+                return transaction.type ===
+                  "income"
+                  ? total + amount
+                  : total - amount;
+
+              },
+              0
+            );
 
 
-  /* ========================================
-     FUND-WISE MONTHLY REPORT
-  ======================================== */
-
-  const fundReport =
-    useMemo(() => {
-
-      return funds
-        .filter(
-          (fund) =>
-            fund.is_active
-        )
-        .map(
-          (fund) => {
-
-            /* -----------------------------
-               BEFORE PERIOD
-            ----------------------------- */
-
-            const beforePeriod =
-              transactions.filter(
+          const income =
+            monthly
+              .filter(
                 (transaction) =>
-                  transaction.fund_id ===
-                    fund.id &&
-                  transaction.transaction_date <
-                    period.start
-              );
-
-
-            /* -----------------------------
-               THIS MONTH
-            ----------------------------- */
-
-            const monthly =
-              monthlyTransactions.filter(
-                (transaction) =>
-                  transaction.fund_id ===
-                  fund.id
-              );
-
-
-            /* -----------------------------
-               OPENING
-            ----------------------------- */
-
-            const opening =
-              beforePeriod.reduce(
+                  transaction.type ===
+                  "income"
+              )
+              .reduce(
                 (
                   total,
                   transaction
-                ) => {
-
-                  const amount =
-                    Number(
-                      transaction.amount
-                    );
-
-
-                  return transaction.type ===
-                    "income"
-                    ? total + amount
-                    : total - amount;
-                },
+                ) =>
+                  total +
+                  Number(
+                    transaction.amount
+                  ),
                 0
               );
 
 
-            /* -----------------------------
-               INCOME
-            ----------------------------- */
-
-            const income =
-              monthly
-                .filter(
-                  (transaction) =>
-                    transaction.type ===
-                    "income"
-                )
-                .reduce(
-                  (
-                    total,
-                    transaction
-                  ) =>
-                    total +
-                    Number(
-                      transaction.amount
-                    ),
-                  0
-                );
+          const expenses =
+            monthly
+              .filter(
+                (transaction) =>
+                  transaction.type ===
+                  "expense"
+              )
+              .reduce(
+                (
+                  total,
+                  transaction
+                ) =>
+                  total +
+                  Number(
+                    transaction.amount
+                  ),
+                0
+              );
 
 
-            /* -----------------------------
-               EXPENSES
-            ----------------------------- */
-
-            const expenses =
-              monthly
-                .filter(
-                  (transaction) =>
-                    transaction.type ===
-                    "expense"
-                )
-                .reduce(
-                  (
-                    total,
-                    transaction
-                  ) =>
-                    total +
-                    Number(
-                      transaction.amount
-                    ),
-                  0
-                );
+          const closing =
+            opening +
+            income -
+            expenses;
 
 
-            /* -----------------------------
-               CLOSING
-            ----------------------------- */
+          return {
+            ...fund,
+            opening,
+            income,
+            expenses,
+            closing,
+          };
 
-            const closing =
-              opening +
-              income -
-              expenses;
+        }
+      );
+
+  }, [
+    funds,
+    transactions,
+    monthlyTransactions,
+    period,
+  ]);
 
 
-            return {
-              ...fund,
+/* ========================================
+   SEPARATE FUND MONTHLY REPORT
+======================================== */
 
-              opening,
+const separateFundReport =
+  useMemo(() => {
 
-              income,
+    return funds
+      .filter(
+        (fund) =>
+          fund.is_active &&
+          fund.include_in_masjid_totals === false
+      )
+      .map(
+        (fund) => {
 
-              expenses,
+          const beforePeriod =
+            transactions.filter(
+              (transaction) =>
+                transaction.fund_id ===
+                  fund.id &&
+                transaction.transaction_date <
+                  period.start
+            );
 
-              closing,
-            };
-          }
-        );
 
-    }, [
-      funds,
-      transactions,
-      monthlyTransactions,
-      period,
-    ]);
+          const monthly =
+            monthlyTransactions.filter(
+              (transaction) =>
+                transaction.fund_id ===
+                fund.id
+            );
 
+
+          const opening =
+            beforePeriod.reduce(
+              (
+                total,
+                transaction
+              ) => {
+
+                const amount =
+                  Number(
+                    transaction.amount
+                  );
+
+                return transaction.type ===
+                  "income"
+                  ? total + amount
+                  : total - amount;
+
+              },
+              0
+            );
+
+
+          const income =
+            monthly
+              .filter(
+                (transaction) =>
+                  transaction.type ===
+                  "income"
+              )
+              .reduce(
+                (
+                  total,
+                  transaction
+                ) =>
+                  total +
+                  Number(
+                    transaction.amount
+                  ),
+                0
+              );
+
+
+          const expenses =
+            monthly
+              .filter(
+                (transaction) =>
+                  transaction.type ===
+                  "expense"
+              )
+              .reduce(
+                (
+                  total,
+                  transaction
+                ) =>
+                  total +
+                  Number(
+                    transaction.amount
+                  ),
+                0
+              );
+
+
+          const closing =
+            opening +
+            income -
+            expenses;
+
+
+          return {
+            ...fund,
+            opening,
+            income,
+            expenses,
+            closing,
+          };
+
+        }
+      );
+
+  }, [
+    funds,
+    transactions,
+    monthlyTransactions,
+    period,
+  ]);
 
   /* ========================================
      DOWNLOAD PDF
@@ -2219,7 +2509,127 @@ async function runTransactionImport() {
       }
     );
 
+{/* ==================================
+    SEPARATE FUNDS SUMMARY
+================================== */}
 
+{separateFundReport.length > 0 && (
+
+  <section className="report-section separate-funds-report-section">
+
+    <div className="report-section-heading">
+
+      <div>
+
+        <p className="section-label">
+          SEPARATE FUNDS
+        </p>
+
+        <h2>
+          Separately Managed Funds
+        </h2>
+
+        <p>
+          These funds are reported independently
+          and are not included in the Masjid's
+          financial totals.
+        </p>
+
+      </div>
+
+    </div>
+
+
+    <div className="fund-report-table-wrapper">
+
+      <table className="fund-report-table">
+
+        <thead>
+
+          <tr>
+
+            <th>
+              Fund
+            </th>
+
+            <th>
+              Opening
+            </th>
+
+            <th>
+              Income
+            </th>
+
+            <th>
+              Expenses
+            </th>
+
+            <th>
+              Closing
+            </th>
+
+          </tr>
+
+        </thead>
+
+
+        <tbody>
+
+          {separateFundReport.map(
+            (fund) => (
+
+              <tr key={fund.id}>
+
+                <td>
+                  <strong>
+                    {fund.name}
+                  </strong>
+                </td>
+
+                <td>
+                  {formatCurrency(
+                    fund.opening
+                  )}
+                </td>
+
+                <td className="report-table-income">
+                  +
+                  {" "}
+                  {formatCurrency(
+                    fund.income
+                  )}
+                </td>
+
+                <td className="report-table-expense">
+                  -
+                  {" "}
+                  {formatCurrency(
+                    fund.expenses
+                  )}
+                </td>
+
+                <td>
+                  <strong>
+                    {formatCurrency(
+                      fund.closing
+                    )}
+                  </strong>
+                </td>
+
+              </tr>
+
+            )
+          )}
+
+        </tbody>
+
+      </table>
+
+    </div>
+
+  </section>
+
+)}
     /* ======================================
        TRANSACTIONS
     ====================================== */
@@ -2484,54 +2894,104 @@ async function runTransactionImport() {
 
 
       {/* ==================================
-          MONTH SELECTOR
-      ================================== */}
+    REPORT PERIOD SELECTORS
+================================== */}
 
-      <div className="report-period-bar">
+<div className="report-period-bar">
 
-        <div>
+  <div className="report-period-control">
 
-          <label>
-            Reporting Period
-          </label>
+    <label>
+      Reporting Year
+    </label>
 
-          <input
-            type="month"
-            value={
-              selectedMonth
-            }
-            onChange={(event) => {
+    <select
+      value={selectedYear}
+      onChange={(event) => {
 
-              setSelectedMonth(
-                event.target.value
-              );
+        const year =
+          event.target.value;
 
-              /*
-                Date filters belong to the
-                selected month, so reset them
-                when the month changes.
-              */
+        setSelectedYear(
+          year
+        );
 
-              setTransactionFromDate(
-                ""
-              );
+        setSelectedMonth(
+          `${year}-${selectedMonth.split("-")[1]}`
+        );
 
-              setTransactionToDate(
-                ""
-              );
-            }}
-          />
+        setTransactionFromDate("");
+        setTransactionToDate("");
 
-        </div>
+      }}
+    >
+
+      {Array.from(
+        {
+          length: 10,
+        },
+        (_, index) => {
+
+          const year =
+            now.getFullYear() -
+            5 +
+            index;
+
+          return (
+            <option
+              key={year}
+              value={String(year)}
+            >
+              {year}
+            </option>
+          );
+
+        }
+      )}
+
+    </select>
+
+  </div>
 
 
-        <strong>
-          {formatMonthLabel(
-            selectedMonth
-          )}
-        </strong>
+  <div className="report-period-control">
 
-      </div>
+    <label>
+      Reporting Month
+    </label>
+
+    <input
+      type="month"
+      value={selectedMonth}
+      onChange={(event) => {
+
+        const value =
+          event.target.value;
+
+        setSelectedMonth(
+          value
+        );
+
+        setSelectedYear(
+          value.split("-")[0]
+        );
+
+        setTransactionFromDate("");
+        setTransactionToDate("");
+
+      }}
+    />
+
+  </div>
+
+
+  <strong>
+    {formatMonthLabel(
+      selectedMonth
+    )}
+  </strong>
+
+</div>
 
 
       {/* ==================================
@@ -2619,7 +3079,150 @@ async function runTransactionImport() {
           </div>
 
         </div>
+{/* ==================================
+    MONTHLY BALANCE REGISTER
+================================== */}
 
+<section className="report-section monthly-balance-register-section">
+
+  <div className="report-section-heading">
+
+    <div>
+
+      <h2>
+        Monthly Balance Register
+      </h2>
+
+      <p>
+        Opening and closing balances for
+        each month of {selectedYear}.
+      </p>
+
+    </div>
+
+  </div>
+
+
+  <div className="fund-report-table-wrapper">
+
+    <table className="fund-report-table monthly-balance-register-table">
+
+      <thead>
+
+        <tr>
+
+          <th>
+            Month
+          </th>
+
+          <th>
+            Opening Balance
+          </th>
+
+          <th>
+            Income
+          </th>
+
+          <th>
+            Expenses
+          </th>
+
+          <th>
+            Closing Balance
+          </th>
+
+        </tr>
+
+      </thead>
+
+
+      <tbody>
+
+        {monthlyBalanceRegister.map(
+          (month) => (
+
+           <tr
+  key={
+    month.monthValue
+  }
+  className={
+    month.monthValue ===
+    selectedMonth
+      ? "monthly-balance-current"
+      : ""
+  }
+>
+
+              <td>
+
+                <strong>
+                  {
+                    month.monthLabel
+                  }
+                </strong>
+
+              </td>
+
+
+              <td>
+                {
+                  formatCurrency(
+                    month.opening
+                  )
+                }
+              </td>
+
+
+              <td className="report-table-income">
+
+                +{" "}
+
+                {
+                  formatCurrency(
+                    month.income
+                  )
+                }
+
+              </td>
+
+
+              <td className="report-table-expense">
+
+                -{" "}
+
+                {
+                  formatCurrency(
+                    month.expenses
+                  )
+                }
+
+              </td>
+
+
+              <td>
+
+                <strong>
+                  {
+                    formatCurrency(
+                      month.closing
+                    )
+                  }
+                </strong>
+
+              </td>
+
+            </tr>
+
+          )
+        )}
+
+      </tbody>
+
+    </table>
+
+  </div>
+
+</section>
 
         {/* ==================================
             FUND-WISE SUMMARY

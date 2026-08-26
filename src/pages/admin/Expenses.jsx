@@ -112,16 +112,18 @@ function Expenses() {
       await Promise.all([
 
         supabase
-          .from("funds")
-          .select(
-            "id, name"
-          )
-          .eq(
-            "is_active",
-            true
-          )
-          .order("name"),
-
+  .from("funds")
+  .select(`
+    id,
+    name,
+    fund_type,
+    include_in_masjid_totals
+  `)
+  .eq(
+    "is_active",
+    true
+  )
+  .order("name"),
 
         supabase
           .from("expense_categories")
@@ -188,9 +190,12 @@ function Expenses() {
         ...current,
 
         fundId:
-          current.fundId ||
-          loadedFunds[0]?.id ||
-          "",
+  current.fundId ||
+  loadedFunds.find(
+    (fund) =>
+      fund.include_in_masjid_totals !== false
+  )?.id ||
+  "",
 
         category:
           current.category ||
@@ -568,8 +573,11 @@ function Expenses() {
 
       setForm({
         fundId:
-          funds[0]?.id ||
-          "",
+  funds.find(
+    (fund) =>
+      fund.include_in_masjid_totals !== false
+  )?.id ||
+  "",
 
         amount:
           "",
@@ -1345,47 +1353,66 @@ function Expenses() {
 
             <div className="form-field">
 
-              <label>
-                Fund
-              </label>
+  <label>
+    Fund
+  </label>
 
-              <select
-                name="fundId"
-                value={
-                  form.fundId
-                }
-                onChange={
-                  handleChange
-                }
-                required
-              >
+  <select
+    name="fundId"
+    value={form.fundId}
+    onChange={handleChange}
+    required
+  >
 
-                <option value="">
-                  Select fund
-                </option>
+    <option value="">
+      Select fund
+    </option>
 
-                {funds.map(
-                  (fund) => (
 
-                    <option
-                      key={
-                        fund.id
-                      }
-                      value={
-                        fund.id
-                      }
-                    >
-                      {
-                        fund.name
-                      }
-                    </option>
+    <optgroup label="Masjid Funds">
 
-                  )
-                )}
+      {funds
+        .filter(
+          (fund) =>
+            fund.include_in_masjid_totals !== false
+        )
+        .map(
+          (fund) => (
+            <option
+              key={fund.id}
+              value={fund.id}
+            >
+              {fund.name}
+            </option>
+          )
+        )}
 
-              </select>
+    </optgroup>
 
-            </div>
+
+    <optgroup label="Separate Funds">
+
+      {funds
+        .filter(
+          (fund) =>
+            fund.include_in_masjid_totals === false
+        )
+        .map(
+          (fund) => (
+            <option
+              key={fund.id}
+              value={fund.id}
+            >
+              {fund.name}
+            </option>
+          )
+        )}
+
+    </optgroup>
+
+  </select>
+
+</div>
 
 
             {/* AMOUNT */}

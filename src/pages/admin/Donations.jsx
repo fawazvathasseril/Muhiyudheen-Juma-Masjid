@@ -48,10 +48,15 @@ const [memberSearch, setMemberSearch] = useState("");
       externalResult,
     ] = await Promise.all([
       supabase
-        .from("funds")
-        .select("id, name")
-        .eq("is_active", true)
-        .order("name"),
+  .from("funds")
+  .select(`
+    id,
+    name,
+    fund_type,
+    include_in_masjid_totals
+  `)
+  .eq("is_active", true)
+  .order("name"),
 
       supabase
         .from("mahall_members")
@@ -109,10 +114,12 @@ const [memberSearch, setMemberSearch] = useState("");
       ...current,
 
       fundId:
-        current.fundId ||
-        loadedFunds[0]?.id ||
-        "",
-
+  current.fundId ||
+  loadedFunds.find(
+    (fund) =>
+      fund.include_in_masjid_totals !== false
+  )?.id ||
+  "",
       memberId:
         current.memberId ||
         loadedMembers[0]?.id ||
@@ -710,45 +717,66 @@ const [memberSearch, setMemberSearch] = useState("");
 
             <div className="form-field">
 
-              <label>
-                Fund
-              </label>
+  <label>
+    Fund
+  </label>
 
-              <select
-                name="fundId"
-                value={
-                  form.fundId
-                }
-                onChange={
-                  handleChange
-                }
-                required
-              >
+  <select
+    name="fundId"
+    value={form.fundId}
+    onChange={handleChange}
+    required
+  >
 
-                <option value="">
-                  Select fund
-                </option>
+    <option value="">
+      Select fund
+    </option>
 
-                {funds.map(
-                  (fund) => (
-                    <option
-                      key={
-                        fund.id
-                      }
-                      value={
-                        fund.id
-                      }
-                    >
-                      {
-                        fund.name
-                      }
-                    </option>
-                  )
-                )}
 
-              </select>
+    <optgroup label="Masjid Funds">
 
-            </div>
+      {funds
+        .filter(
+          (fund) =>
+            fund.include_in_masjid_totals !== false
+        )
+        .map(
+          (fund) => (
+            <option
+              key={fund.id}
+              value={fund.id}
+            >
+              {fund.name}
+            </option>
+          )
+        )}
+
+    </optgroup>
+
+
+    <optgroup label="Separate Funds">
+
+      {funds
+        .filter(
+          (fund) =>
+            fund.include_in_masjid_totals === false
+        )
+        .map(
+          (fund) => (
+            <option
+              key={fund.id}
+              value={fund.id}
+            >
+              {fund.name}
+            </option>
+          )
+        )}
+
+    </optgroup>
+
+  </select>
+
+</div>
 
 
             {/* Amount */}

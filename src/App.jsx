@@ -519,12 +519,19 @@ function App() {
             ADMIN LOGIN
         ================================================== */}
 
-        <Route
-          path="/admin/login"
-          element={
-            <Login />
-          }
-        />
+        {/* =========================
+    ADMIN LOGIN
+========================== */}
+
+<Route
+  path="/admin"
+  element={<Login />}
+/>
+
+<Route
+  path="/admin/login"
+  element={<Login />}
+/>
 
 
         {/* =================================================

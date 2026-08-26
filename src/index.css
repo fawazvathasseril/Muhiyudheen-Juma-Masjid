@@ -14065,3 +14065,175 @@ input {
   }
 
 }
+/* ============================================
+   MONTHLY BALANCE REGISTER
+============================================ */
+
+.report-period-control {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 5px;
+}
+
+
+.report-period-control label {
+  color: #6f7e75;
+
+  font-size: 8px;
+
+  font-weight: 700;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.35px;
+}
+
+
+.report-period-control select,
+.report-period-control input {
+  min-height: 38px;
+
+  padding:
+    0 11px;
+
+  border:
+    1px solid #d9e3dc;
+
+  border-radius: 8px;
+
+  background: #ffffff;
+
+  color: #315441;
+
+  font-size: 9px;
+
+  outline: none;
+
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+
+.report-period-control select:focus,
+.report-period-control input:focus {
+  border-color:
+    #78a68c;
+
+  box-shadow:
+    0 0 0 3px
+    rgba(
+      18,
+      100,
+      59,
+      0.06
+    );
+}
+
+
+/* Current month */
+
+.monthly-balance-current {
+  background:
+    #f3f8f4;
+}
+
+
+.monthly-balance-current td:first-child {
+  border-left:
+    3px solid #12643b;
+}
+
+
+.monthly-balance-current td {
+  font-weight: 600;
+}
+
+
+/* Table */
+
+.monthly-balance-register-table th,
+.monthly-balance-register-table td {
+  white-space: nowrap;
+}
+
+
+.monthly-balance-register-section {
+  overflow: hidden;
+}
+
+
+/* Mobile */
+
+@media (max-width: 700px) {
+
+  .report-period-bar {
+    align-items:
+      stretch;
+
+    flex-wrap:
+      wrap;
+  }
+
+
+  .report-period-control {
+    flex:
+      1 1 150px;
+  }
+
+
+  .monthly-balance-register-table {
+    min-width:
+      650px;
+  }
+
+}
+/* ============================================
+   SEPARATE FUNDS
+============================================ */
+
+.separate-funds-section {
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #dfe8e2;
+}
+
+
+.separate-fund-card {
+  border-color: #d9e4dc;
+  background:
+    linear-gradient(
+      180deg,
+      #fbfdfb 0%,
+      #f5f9f6 100%
+    );
+}
+
+
+.separate-fund-card .fund-active-badge {
+  background: #eef4ef;
+  color: #476552;
+}
+
+
+.separate-fund-card .fund-card-footer {
+  align-items: center;
+}
+
+
+.separate-fund-card .fund-card-footer > span {
+  color: #6d7b72;
+  font-size: 11px;
+}
+
+.separate-funds-report-section {
+  margin-top: 28px;
+  padding-top: 26px;
+  border-top: 1px solid #dfe8e2;
+}
+
+.separate-funds-report-section .section-label {
+  color: #6f7f73;
+}
