@@ -11,13 +11,8 @@ function Expenses() {
 
   const {
     user,
-    member,
     loading: authLoading,
   } = useAuth();
-
-
-  const isAdmin =
-    member?.role === "admin";
 
 
   /* ========================================
@@ -25,9 +20,6 @@ function Expenses() {
   ======================================== */
 
   const [funds, setFunds] =
-    useState([]);
-
-  const [expenseCategories, setExpenseCategories] =
     useState([]);
 
   const [loadingData, setLoadingData] =
@@ -58,8 +50,8 @@ function Expenses() {
   const [form, setForm] =
     useState({
       fundId: "",
+      expensePurpose: "",
       amount: "",
-      category: "",
       description: "",
       transactionDate:
         new Date()
@@ -67,31 +59,6 @@ function Expenses() {
           .split("T")[0],
       referenceNumber: "",
       paymentMethod: "cash",
-      partyName: "",
-    });
-
-
-  /* ========================================
-     CATEGORY MODAL
-  ======================================== */
-
-  const [showCategoryManager, setShowCategoryManager] =
-    useState(false);
-
-  const [showCategoryModal, setShowCategoryModal] =
-    useState(false);
-
-  const [editingCategory, setEditingCategory] =
-    useState(null);
-
-  const [savingCategory, setSavingCategory] =
-    useState(false);
-
-  const [categoryForm, setCategoryForm] =
-    useState({
-      name: "",
-      description: "",
-      isActive: true,
     });
 
 
@@ -103,45 +70,33 @@ function Expenses() {
 
     setLoadingData(true);
     setError("");
+    setMessage("");
 
 
-    const [
-      fundsResult,
-      categoriesResult,
-    ] =
-      await Promise.all([
-
-        supabase
-  .from("funds")
-  .select(`
-    id,
-    name,
-    fund_type,
-    include_in_masjid_totals
-  `)
-  .eq(
-    "is_active",
-    true
-  )
-  .order("name"),
-
-        supabase
-          .from("expense_categories")
-          .select(`
-            id,
-            name,
-            description,
-            is_active,
-            created_at
-          `)
-          .order("name"),
-      ]);
+    const {
+      data: loadedFunds,
+      error: fundsError,
+    } = await supabase
+      .from("funds")
+      .select(`
+        id,
+        name,
+        fund_type,
+        include_in_masjid_totals
+      `)
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "name"
+      );
 
 
-    if (fundsResult.error) {
+    if (fundsError) {
 
       setError(
-        fundsResult.error.message
+        fundsError.message
       );
 
       setLoadingData(false);
@@ -150,39 +105,13 @@ function Expenses() {
     }
 
 
-    if (categoriesResult.error) {
-
-      setError(
-        categoriesResult.error.message
-      );
-
-      setLoadingData(false);
-
-      return;
-    }
-
-
-    const loadedFunds =
-      fundsResult.data || [];
-
-    const loadedCategories =
-      categoriesResult.data || [];
+    const fundsData =
+      loadedFunds || [];
 
 
     setFunds(
-      loadedFunds
+      fundsData
     );
-
-    setExpenseCategories(
-      loadedCategories
-    );
-
-
-    const activeCategories =
-      loadedCategories.filter(
-        (category) =>
-          category.is_active
-      );
 
 
     setForm(
@@ -190,16 +119,15 @@ function Expenses() {
         ...current,
 
         fundId:
-  current.fundId ||
-  loadedFunds.find(
-    (fund) =>
-      fund.include_in_masjid_totals !== false
-  )?.id ||
-  "",
+          current.fundId ||
+          fundsData.find(
+            (fund) =>
+              fund.include_in_masjid_totals !== false
+          )?.id ||
+          "",
 
-        category:
-          current.category ||
-          activeCategories[0]?.name ||
+        expensePurpose:
+          current.expensePurpose ||
           "",
       })
     );
@@ -215,7 +143,9 @@ function Expenses() {
       loadData();
     }
 
-  }, [authLoading]);
+  }, [
+    authLoading,
+  ]);
 
 
   /* ========================================
@@ -229,16 +159,13 @@ function Expenses() {
     const {
       name,
       value,
-    } =
-      event.target;
+    } = event.target;
 
 
     setForm(
       (current) => ({
         ...current,
-
-        [name]:
-          value,
+        [name]: value,
       })
     );
   }
@@ -370,10 +297,12 @@ function Expenses() {
     }
 
 
-    if (!form.category) {
+    if (
+      !form.expensePurpose.trim()
+    ) {
 
       setError(
-        "Please select an expense category."
+        "Please enter what this expense was for."
       );
 
       return;
@@ -407,9 +336,10 @@ function Expenses() {
 
     try {
 
-      /* -----------------------------
+      /* =============================
          STEP 1
-      ----------------------------- */
+         CREATE TRANSACTION
+      ============================= */
 
       const {
         data: transaction,
@@ -427,18 +357,24 @@ function Expenses() {
 
             amount,
 
+            /*
+             * We keep using the existing
+             * transactions.category column,
+             * but now it stores the user's
+             * free-text expense purpose.
+             */
             category:
-              form.category,
+              form.expensePurpose.trim(),
 
             description:
-              form.description ||
+              form.description.trim() ||
               null,
 
             transaction_date:
               form.transactionDate,
 
             reference_number:
-              form.referenceNumber ||
+              form.referenceNumber.trim() ||
               null,
 
             created_by:
@@ -447,9 +383,6 @@ function Expenses() {
             payment_method:
               form.paymentMethod,
 
-            party_name:
-              form.partyName.trim() ||
-              null,
           })
           .select(
             "id"
@@ -460,6 +393,7 @@ function Expenses() {
       if (
         transactionError
       ) {
+
         throw transactionError;
       }
 
@@ -468,10 +402,10 @@ function Expenses() {
         transaction.id;
 
 
-      /* -----------------------------
+      /* =============================
          STEP 2
-         Receipt
-      ----------------------------- */
+         RECEIPT UPLOAD
+      ============================= */
 
       if (receiptFile) {
 
@@ -515,6 +449,7 @@ function Expenses() {
         if (
           uploadError
         ) {
+
           throw uploadError;
         }
 
@@ -523,9 +458,10 @@ function Expenses() {
           filePath;
 
 
-        /* -----------------------------
+        /* =============================
            STEP 3
-        ----------------------------- */
+           LINK RECEIPT
+        ============================= */
 
         const {
           error:
@@ -548,14 +484,15 @@ function Expenses() {
         if (
           updateError
         ) {
+
           throw updateError;
         }
       }
 
 
-      /* -----------------------------
+      /* =============================
          SUCCESS
-      ----------------------------- */
+      ============================= */
 
       setMessage(
         receiptFile
@@ -564,26 +501,22 @@ function Expenses() {
       );
 
 
-      const activeCategories =
-        expenseCategories.filter(
-          (category) =>
-            category.is_active
+      const defaultFund =
+        funds.find(
+          (fund) =>
+            fund.include_in_masjid_totals !== false
         );
 
 
       setForm({
         fundId:
-  funds.find(
-    (fund) =>
-      fund.include_in_masjid_totals !== false
-  )?.id ||
-  "",
-
-        amount:
+          defaultFund?.id ||
           "",
 
-        category:
-          activeCategories[0]?.name ||
+        expensePurpose:
+          "",
+
+        amount:
           "",
 
         description:
@@ -599,9 +532,6 @@ function Expenses() {
 
         paymentMethod:
           "cash",
-
-        partyName:
-          "",
       });
 
 
@@ -625,6 +555,10 @@ function Expenses() {
       submitError
     ) {
 
+      /*
+       * Roll back the uploaded receipt
+       * if the transaction later fails.
+       */
       if (
         uploadedReceiptPath
       ) {
@@ -639,6 +573,10 @@ function Expenses() {
       }
 
 
+      /*
+       * Roll back the transaction
+       * if anything after insertion fails.
+       */
       if (
         transactionId
       ) {
@@ -666,377 +604,6 @@ function Expenses() {
         false
       );
     }
-  }
-
-
-  /* ========================================
-     CATEGORY MANAGEMENT
-  ======================================== */
-
-  function openNewCategory() {
-
-    setEditingCategory(
-      null
-    );
-
-    setCategoryForm({
-      name: "",
-      description: "",
-      isActive: true,
-    });
-
-    setError("");
-    setMessage("");
-
-    setShowCategoryModal(
-      true
-    );
-  }
-
-
-  function openEditCategory(
-    category
-  ) {
-
-    setEditingCategory(
-      category
-    );
-
-    setCategoryForm({
-      name:
-        category.name ||
-        "",
-
-      description:
-        category.description ||
-        "",
-
-      isActive:
-        category.is_active,
-    });
-
-    setError("");
-    setMessage("");
-
-    setShowCategoryModal(
-      true
-    );
-  }
-
-
-  async function saveCategory(
-    event
-  ) {
-
-    event.preventDefault();
-
-
-    if (!isAdmin) {
-
-      setError(
-        "Only admins can manage expense categories."
-      );
-
-      return;
-    }
-
-
-    const newName =
-      categoryForm.name.trim();
-
-
-    if (!newName) {
-
-      setError(
-        "Category name is required."
-      );
-
-      return;
-    }
-
-
-    setSavingCategory(
-      true
-    );
-
-    setError("");
-    setMessage("");
-
-
-    try {
-
-      /* =============================
-         EDIT EXISTING CATEGORY
-      ============================= */
-
-      if (
-        editingCategory
-      ) {
-
-        const oldName =
-          editingCategory.name;
-
-
-        /* -----------------------------
-           Rename category in
-           existing transactions too.
-           This keeps historical reports
-           consistent with the new name.
-        ----------------------------- */
-
-        if (
-          oldName !==
-          newName
-        ) {
-
-          const {
-            error:
-              transactionUpdateError,
-          } =
-            await supabase
-              .from(
-                "transactions"
-              )
-              .update({
-                category:
-                  newName,
-              })
-              .eq(
-                "type",
-                "expense"
-              )
-              .eq(
-                "category",
-                oldName
-              );
-
-
-          if (
-            transactionUpdateError
-          ) {
-            throw transactionUpdateError;
-          }
-        }
-
-
-        const {
-          error:
-            categoryUpdateError,
-        } =
-          await supabase
-            .from(
-              "expense_categories"
-            )
-            .update({
-              name:
-                newName,
-
-              description:
-                categoryForm.description.trim() ||
-                null,
-
-              is_active:
-                categoryForm.isActive,
-            })
-            .eq(
-              "id",
-              editingCategory.id
-            );
-
-
-        if (
-          categoryUpdateError
-        ) {
-          throw categoryUpdateError;
-        }
-
-
-        setMessage(
-          "Expense category updated successfully."
-        );
-
-      } else {
-
-        /* =============================
-           CREATE CATEGORY
-        ============================= */
-
-        const {
-          error:
-            categoryInsertError,
-        } =
-          await supabase
-            .from(
-              "expense_categories"
-            )
-            .insert({
-              name:
-                newName,
-
-              description:
-                categoryForm.description.trim() ||
-                null,
-
-              is_active:
-                categoryForm.isActive,
-
-              created_by:
-                user.id,
-            });
-
-
-        if (
-          categoryInsertError
-        ) {
-          throw categoryInsertError;
-        }
-
-
-        setMessage(
-          "Expense category created successfully."
-        );
-      }
-
-
-      setShowCategoryModal(
-        false
-      );
-
-
-      await loadData();
-
-    } catch (
-      categoryError
-    ) {
-
-      setError(
-        categoryError?.message ||
-          "Unable to save the expense category."
-      );
-
-    } finally {
-
-      setSavingCategory(
-        false
-      );
-    }
-  }
-
-
-  async function deleteCategory(
-    category
-  ) {
-
-    if (!isAdmin) {
-      return;
-    }
-
-
-    /* -----------------------------
-       Check historical usage
-    ----------------------------- */
-
-    const {
-      count,
-      error:
-        usageError,
-    } =
-      await supabase
-        .from(
-          "transactions"
-        )
-        .select(
-          "id",
-          {
-            count:
-              "exact",
-
-            head:
-              true,
-          }
-        )
-        .eq(
-          "type",
-          "expense"
-        )
-        .eq(
-          "category",
-          category.name
-        );
-
-
-    if (
-      usageError
-    ) {
-
-      setError(
-        usageError.message
-      );
-
-      return;
-    }
-
-
-    if (
-      (count || 0) > 0
-    ) {
-
-      setError(
-        `"${category.name}" cannot be deleted because ${count} expense transaction${count === 1 ? "" : "s"} use this category. Deactivate it instead to preserve financial history.`
-      );
-
-      return;
-    }
-
-
-    const confirmed =
-      window.confirm(
-        `Permanently delete "${category.name}"? This cannot be undone.`
-      );
-
-
-    if (!confirmed) {
-      return;
-    }
-
-
-    setError("");
-    setMessage("");
-
-
-    const {
-      error:
-        deleteError,
-    } =
-      await supabase
-        .from(
-          "expense_categories"
-        )
-        .delete()
-        .eq(
-          "id",
-          category.id
-        );
-
-
-    if (
-      deleteError
-    ) {
-
-      setError(
-        deleteError.message
-      );
-
-      return;
-    }
-
-
-    await loadData();
-
-
-    setMessage(
-      `"${category.name}" was permanently deleted.`
-    );
   }
 
 
@@ -1087,28 +654,19 @@ function Expenses() {
         </div>
 
 
-        <div className="expense-header-actions">
-
-          {isAdmin && (
-
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() =>
-                setShowCategoryManager(
-                  (current) =>
-                    !current
-                )
-              }
-            >
-              {showCategoryManager
-                ? "Close Categories"
-                : "Expense Categories"}
-            </button>
-
-          )}
-
-        </div>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={
+            loadData
+          }
+          disabled={
+            loadingData ||
+            saving
+          }
+        >
+          ↻ Refresh
+        </button>
 
       </div>
 
@@ -1132,144 +690,6 @@ function Expenses() {
 
 
       {/* ==================================
-          CATEGORY MANAGEMENT
-      ================================== */}
-
-      {isAdmin &&
-        showCategoryManager && (
-
-        <section className="expense-category-manager">
-
-          <div className="expense-category-manager-header">
-
-            <div>
-
-              <p className="section-label">
-                EXPENSE STRUCTURE
-              </p>
-
-              <h2>
-                Expense Categories
-              </h2>
-
-              <p>
-                Categories organize expense
-                transactions for reports and
-                accounting.
-              </p>
-
-            </div>
-
-
-            <button
-              type="button"
-              className="primary-button"
-              onClick={
-                openNewCategory
-              }
-            >
-              + Add Category
-            </button>
-
-          </div>
-
-
-          <div className="expense-category-grid">
-
-            {expenseCategories.map(
-              (category) => (
-
-                <article
-                  key={
-                    category.id
-                  }
-                  className={
-                    category.is_active
-                      ? "expense-category-card"
-                      : "expense-category-card inactive"
-                  }
-                >
-
-                  <div className="expense-category-top">
-
-                    <div className="expense-category-icon">
-                      ₹
-                    </div>
-
-
-                    <span
-                      className={
-                        category.is_active
-                          ? "expense-category-status active"
-                          : "expense-category-status inactive"
-                      }
-                    >
-                      {
-                        category.is_active
-                          ? "ACTIVE"
-                          : "INACTIVE"
-                      }
-                    </span>
-
-                  </div>
-
-
-                  <h3>
-                    {
-                      category.name
-                    }
-                  </h3>
-
-
-                  <p>
-                    {
-                      category.description ||
-                      "No description provided."
-                    }
-                  </p>
-
-
-                  <div className="expense-category-actions">
-
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() =>
-                        openEditCategory(
-                          category
-                        )
-                      }
-                    >
-                      Edit
-                    </button>
-
-
-                    <button
-                      type="button"
-                      className="member-action danger"
-                      onClick={() =>
-                        deleteCategory(
-                          category
-                        )
-                      }
-                    >
-                      Delete
-                    </button>
-
-                  </div>
-
-                </article>
-
-              )
-            )}
-
-          </div>
-
-        </section>
-      )}
-
-
-      {/* ==================================
           EXPENSE FORM
       ================================== */}
 
@@ -1283,25 +703,147 @@ function Expenses() {
 
           <div className="admin-form-grid">
 
-            {/* PAYEE */}
+            {/* EXPENSE PURPOSE */}
 
             <div className="form-field">
 
               <label>
-                Payee / Vendor
+                What was this expense for?
               </label>
 
               <input
                 type="text"
-                name="partyName"
+                name="expensePurpose"
                 value={
-                  form.partyName
+                  form.expensePurpose
                 }
                 onChange={
                   handleChange
                 }
-                placeholder="Optional"
+                placeholder="e.g. Electricity bill, tiles, plumbing work..."
+                autoComplete="off"
+                required
               />
+
+            </div>
+
+
+            {/* FUND */}
+
+            <div className="form-field">
+
+              <label>
+                Fund
+              </label>
+
+              <select
+                name="fundId"
+                value={
+                  form.fundId
+                }
+                onChange={
+                  handleChange
+                }
+                required
+              >
+
+                <option value="">
+                  Select fund
+                </option>
+
+
+                <optgroup label="Masjid Funds">
+
+                  {funds
+                    .filter(
+                      (fund) =>
+                        fund.include_in_masjid_totals !== false
+                    )
+                    .map(
+                      (fund) => (
+
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {
+                            fund.name
+                          }
+                        </option>
+
+                      )
+                    )}
+
+                </optgroup>
+
+
+                <optgroup label="Separate Funds">
+
+                  {funds
+                    .filter(
+                      (fund) =>
+                        fund.include_in_masjid_totals === false
+                    )
+                    .map(
+                      (fund) => (
+
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {
+                            fund.name
+                          }
+                        </option>
+
+                      )
+                    )}
+
+                </optgroup>
+
+              </select>
+
+            </div>
+
+
+            {/* AMOUNT */}
+
+            <div className="form-field">
+
+              <label>
+                Amount
+              </label>
+
+              <div className="currency-input">
+
+                <span>
+                  ₹
+                </span>
+
+                <input
+                  type="number"
+                  name="amount"
+                  value={
+                    form.amount
+                  }
+                  onChange={
+                    handleChange
+                  }
+                  min="1"
+                  step="0.01"
+                  placeholder="0.00"
+                  required
+                />
+
+              </div>
 
             </div>
 
@@ -1349,158 +891,6 @@ function Expenses() {
             </div>
 
 
-            {/* FUND */}
-
-            <div className="form-field">
-
-  <label>
-    Fund
-  </label>
-
-  <select
-    name="fundId"
-    value={form.fundId}
-    onChange={handleChange}
-    required
-  >
-
-    <option value="">
-      Select fund
-    </option>
-
-
-    <optgroup label="Masjid Funds">
-
-      {funds
-        .filter(
-          (fund) =>
-            fund.include_in_masjid_totals !== false
-        )
-        .map(
-          (fund) => (
-            <option
-              key={fund.id}
-              value={fund.id}
-            >
-              {fund.name}
-            </option>
-          )
-        )}
-
-    </optgroup>
-
-
-    <optgroup label="Separate Funds">
-
-      {funds
-        .filter(
-          (fund) =>
-            fund.include_in_masjid_totals === false
-        )
-        .map(
-          (fund) => (
-            <option
-              key={fund.id}
-              value={fund.id}
-            >
-              {fund.name}
-            </option>
-          )
-        )}
-
-    </optgroup>
-
-  </select>
-
-</div>
-
-
-            {/* AMOUNT */}
-
-            <div className="form-field">
-
-              <label>
-                Amount
-              </label>
-
-              <div className="currency-input">
-
-                <span>
-                  ₹
-                </span>
-
-                <input
-                  type="number"
-                  name="amount"
-                  value={
-                    form.amount
-                  }
-                  onChange={
-                    handleChange
-                  }
-                  min="1"
-                  step="0.01"
-                  placeholder="0.00"
-                  required
-                />
-
-              </div>
-
-            </div>
-
-
-            {/* CATEGORY */}
-
-            <div className="form-field">
-
-              <label>
-                Category
-              </label>
-
-              <select
-                name="category"
-                value={
-                  form.category
-                }
-                onChange={
-                  handleChange
-                }
-                required
-              >
-
-                <option value="">
-                  Select category
-                </option>
-
-                {expenseCategories
-                  .filter(
-                    (category) =>
-                      category.is_active
-                  )
-                  .map(
-                    (category) => (
-
-                      <option
-                        key={
-                          category.id
-                        }
-                        value={
-                          category.name
-                        }
-                      >
-                        {
-                          category.name
-                        }
-                      </option>
-
-                    )
-                  )}
-
-              </select>
-
-            </div>
-
-
             {/* DATE */}
 
             <div className="form-field">
@@ -1523,10 +913,35 @@ function Expenses() {
 
             </div>
 
+
+            {/* REFERENCE */}
+
+            <div className="form-field">
+
+              <label>
+                Bill / Reference Number
+              </label>
+
+              <input
+                type="text"
+                name="referenceNumber"
+                value={
+                  form.referenceNumber
+                }
+                onChange={
+                  handleChange
+                }
+                placeholder="Optional bill or reference number"
+              />
+
+            </div>
+
           </div>
 
 
-          {/* DESCRIPTION */}
+          {/* ==================================
+              DESCRIPTION
+          ================================== */}
 
           <div className="form-field">
 
@@ -1543,36 +958,15 @@ function Expenses() {
                 handleChange
               }
               rows="4"
-              placeholder="What was this expense for?"
+              placeholder="Additional notes about this expense..."
             />
 
           </div>
 
 
-          {/* REFERENCE */}
-
-          <div className="form-field">
-
-            <label>
-              Bill / Reference Number
-            </label>
-
-            <input
-              type="text"
-              name="referenceNumber"
-              value={
-                form.referenceNumber
-              }
-              onChange={
-                handleChange
-              }
-              placeholder="Optional bill or reference number"
-            />
-
-          </div>
-
-
-          {/* RECEIPT */}
+          {/* ==================================
+              RECEIPT
+          ================================== */}
 
           <div className="form-field">
 
@@ -1614,7 +1008,9 @@ function Expenses() {
           </div>
 
 
-          {/* SUBMIT */}
+          {/* ==================================
+              SUBMIT
+          ================================== */}
 
           <div className="admin-form-actions">
 
@@ -1637,204 +1033,6 @@ function Expenses() {
         </form>
 
       </div>
-
-
-      {/* ==================================
-          CATEGORY MODAL
-      ================================== */}
-
-      {showCategoryModal && (
-
-        <div className="expense-category-modal-overlay">
-
-          <div className="expense-category-modal">
-
-            <button
-              type="button"
-              className="expense-category-modal-close"
-              onClick={() =>
-                setShowCategoryModal(
-                  false
-                )
-              }
-              disabled={
-                savingCategory
-              }
-            >
-              ×
-            </button>
-
-
-            <p className="section-label">
-              EXPENSE STRUCTURE
-            </p>
-
-
-            <h2>
-              {
-                editingCategory
-                  ? "Edit Expense Category"
-                  : "Add Expense Category"
-              }
-            </h2>
-
-
-            <p className="expense-category-modal-intro">
-              Expense categories organize
-              transactions for accounting and
-              reporting.
-            </p>
-
-
-            <form
-              onSubmit={
-                saveCategory
-              }
-            >
-
-              <div className="form-field">
-
-                <label>
-                  Category Name
-                </label>
-
-                <input
-                  type="text"
-                  value={
-                    categoryForm.name
-                  }
-                  onChange={(event) =>
-                    setCategoryForm(
-                      (current) => ({
-                        ...current,
-                        name:
-                          event.target.value,
-                      })
-                    )
-                  }
-                  placeholder="e.g. Electricity"
-                  required
-                />
-
-              </div>
-
-
-              <div className="form-field">
-
-                <label>
-                  Description
-                </label>
-
-                <textarea
-                  rows="4"
-                  value={
-                    categoryForm.description
-                  }
-                  onChange={(event) =>
-                    setCategoryForm(
-                      (current) => ({
-                        ...current,
-                        description:
-                          event.target.value,
-                      })
-                    )
-                  }
-                  placeholder="Describe this category..."
-                />
-
-              </div>
-
-
-              <div className="expense-category-status-box">
-
-                <div>
-
-                  <strong>
-                    Category Status
-                  </strong>
-
-                  <p>
-                    Inactive categories will no
-                    longer appear when recording
-                    new expenses.
-                  </p>
-
-                </div>
-
-
-                <button
-                  type="button"
-                  className={
-                    categoryForm.isActive
-                      ? "user-status-toggle active"
-                      : "user-status-toggle inactive"
-                  }
-                  onClick={() =>
-                    setCategoryForm(
-                      (current) => ({
-                        ...current,
-                        isActive:
-                          !current.isActive,
-                      })
-                    )
-                  }
-                >
-
-                  <span />
-
-                  {
-                    categoryForm.isActive
-                      ? "Active"
-                      : "Inactive"
-                  }
-
-                </button>
-
-              </div>
-
-
-              <div className="fund-modal-actions">
-
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() =>
-                    setShowCategoryModal(
-                      false
-                    )
-                  }
-                  disabled={
-                    savingCategory
-                  }
-                >
-                  Cancel
-                </button>
-
-
-                <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={
-                    savingCategory
-                  }
-                >
-                  {
-                    savingCategory
-                      ? "Saving..."
-                      : editingCategory
-                        ? "Save Changes"
-                        : "Create Category"
-                  }
-                </button>
-
-              </div>
-
-            </form>
-
-          </div>
-
-        </div>
-      )}
 
     </div>
   );

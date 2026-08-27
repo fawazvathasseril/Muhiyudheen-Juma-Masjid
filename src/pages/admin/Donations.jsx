@@ -1,62 +1,165 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 
-function Donations() {
-  const { user, loading: authLoading } = useAuth();
 
-  const [funds, setFunds] = useState([]);
-  const [members, setMembers] = useState([]);
+function Donations() {
+
+  const {
+    user,
+    loading: authLoading,
+  } = useAuth();
+
+
+  /* ========================================
+     DATA
+  ======================================== */
+
+  const [funds, setFunds] =
+    useState([]);
+
+  const [categories, setCategories] =
+    useState([]);
+
+  const [members, setMembers] =
+    useState([]);
+
   const [externalContributors, setExternalContributors] =
     useState([]);
 
-  const [loadingData, setLoadingData] = useState(true);
-  const [saving, setSaving] = useState(false);
 
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-const [memberSearch, setMemberSearch] = useState("");
-  const [form, setForm] = useState({
-    contributorType: "member",
-    memberId: "",
-    externalContributorId: "",
+  /* ========================================
+     GENERAL STATE
+  ======================================== */
 
-    fundId: "",
-    amount: "",
+  const [loadingData, setLoadingData] =
+    useState(true);
 
-    category: "donation",
+  const [saving, setSaving] =
+    useState(false);
 
-    description: "",
+  const [error, setError] =
+    useState("");
 
-    transactionDate: new Date()
-      .toISOString()
-      .split("T")[0],
+  const [message, setMessage] =
+    useState("");
 
-    referenceNumber: "",
-    paymentMethod: "cash",
+  const [memberSearch, setMemberSearch] =
+    useState("");
 
-    partyName: "",
-  });
+
+  /* ========================================
+     FORM
+  ======================================== */
+
+  const [form, setForm] =
+    useState({
+
+      contributorType:
+        "member",
+
+      memberId:
+        "",
+
+      externalContributorId:
+        "",
+
+      fundId:
+        "",
+
+      category:
+        "",
+
+      amount:
+        "",
+
+      description:
+        "",
+
+      transactionDate:
+        new Date()
+          .toISOString()
+          .split("T")[0],
+
+      referenceNumber:
+        "",
+
+      paymentMethod:
+        "cash",
+
+      partyName:
+        "",
+    });
+
+
+  /* ========================================
+     LOAD DATA
+  ======================================== */
 
   async function loadData() {
+
     setLoadingData(true);
+
     setError("");
+
 
     const [
       fundsResult,
+      categoriesResult,
       membersResult,
       externalResult,
     ] = await Promise.all([
+
+      /* FUNDS */
+
       supabase
-  .from("funds")
-  .select(`
-    id,
-    name,
-    fund_type,
-    include_in_masjid_totals
-  `)
-  .eq("is_active", true)
-  .order("name"),
+        .from("funds")
+        .select(`
+          id,
+          name,
+          fund_type,
+          include_in_masjid_totals
+        `)
+        .eq(
+          "is_active",
+          true
+        )
+        .order(
+          "name"
+        ),
+
+
+      /* INCOME CATEGORIES */
+
+      supabase
+        .from("fund_categories")
+        .select(`
+          id,
+          name,
+          description,
+          is_active,
+          fund_id
+        `)
+        .eq(
+          "is_active",
+          true
+        )
+        .not(
+          "fund_id",
+          "is",
+          null
+        )
+        .order(
+          "name"
+        ),
+
+
+      /* MEMBERS */
 
       supabase
         .from("mahall_members")
@@ -67,8 +170,16 @@ const [memberSearch, setMemberSearch] = useState("");
           phone,
           household_name
         `)
-        .eq("status", "active")
-        .order("member_code"),
+        .eq(
+          "status",
+          "active"
+        )
+        .order(
+          "member_code"
+        ),
+
+
+      /* EXTERNAL CONTRIBUTORS */
 
       supabase
         .from("external_contributors")
@@ -78,229 +189,536 @@ const [memberSearch, setMemberSearch] = useState("");
           full_name,
           organization
         `)
-        .order("contributor_code"),
+        .order(
+          "contributor_code"
+        ),
     ]);
 
+
     if (fundsResult.error) {
-      setError(fundsResult.error.message);
+
+      setError(
+        fundsResult.error.message
+      );
+
       setLoadingData(false);
+
       return;
     }
+
+
+    if (categoriesResult.error) {
+
+      setError(
+        categoriesResult.error.message
+      );
+
+      setLoadingData(false);
+
+      return;
+    }
+
 
     if (membersResult.error) {
-      setError(membersResult.error.message);
+
+      setError(
+        membersResult.error.message
+      );
+
       setLoadingData(false);
+
       return;
     }
+
 
     if (externalResult.error) {
-      setError(externalResult.error.message);
+
+      setError(
+        externalResult.error.message
+      );
+
       setLoadingData(false);
+
       return;
     }
 
-    const loadedFunds = fundsResult.data || [];
-    const loadedMembers = membersResult.data || [];
+
+    const loadedFunds =
+      fundsResult.data || [];
+
+
+    const loadedCategories =
+      categoriesResult.data || [];
+
+
+    const loadedMembers =
+      membersResult.data || [];
+
+
     const loadedExternal =
       externalResult.data || [];
 
-    setFunds(loadedFunds);
-    setMembers(loadedMembers);
+
+    setFunds(
+      loadedFunds
+    );
+
+    setCategories(
+      loadedCategories
+    );
+
+    setMembers(
+      loadedMembers
+    );
+
     setExternalContributors(
       loadedExternal
     );
 
-    setForm((current) => ({
-      ...current,
 
-      fundId:
-  current.fundId ||
-  loadedFunds.find(
-    (fund) =>
-      fund.include_in_masjid_totals !== false
-  )?.id ||
-  "",
-      memberId:
-        current.memberId ||
-        loadedMembers[0]?.id ||
-        "",
-    }));
+    setForm(
+      (current) => {
+
+        const defaultFund =
+          current.fundId
+            ? loadedFunds.find(
+                (fund) =>
+                  fund.id ===
+                  current.fundId
+              )
+            : loadedFunds.find(
+                (fund) =>
+                  fund.include_in_masjid_totals !== false
+              );
+
+
+        return {
+          ...current,
+
+          fundId:
+            defaultFund?.id ||
+            "",
+
+          category:
+            current.category ||
+            "",
+
+          memberId:
+            current.memberId ||
+            loadedMembers[0]?.id ||
+            "",
+        };
+      }
+    );
+
 
     setLoadingData(false);
   }
 
+
   useEffect(() => {
+
     if (!authLoading) {
       loadData();
     }
-  }, [authLoading]);
 
-  function handleChange(event) {
+  }, [
+    authLoading,
+  ]);
+
+
+  /* ========================================
+     FORM HANDLER
+  ======================================== */
+
+  function handleChange(
+    event
+  ) {
+
     const {
       name,
       value,
     } = event.target;
 
-    setForm((current) => ({
-      ...current,
-      [name]: value,
-    }));
+
+    setForm(
+      (current) => {
+
+        if (
+          name ===
+          "fundId"
+        ) {
+
+          return {
+            ...current,
+
+            fundId:
+              value,
+
+            category:
+              "",
+          };
+        }
+
+
+        return {
+          ...current,
+
+          [name]:
+            value,
+        };
+      }
+    );
   }
+
+
+  /* ========================================
+     CONTRIBUTOR TYPE
+  ======================================== */
 
   function handleContributorTypeChange(
     event
   ) {
-    const type = event.target.value;
 
-    setForm((current) => ({
-      ...current,
-      contributorType: type,
-      memberId:
-        type === "member"
-          ? current.memberId
-          : "",
-      externalContributorId:
-        type === "external"
-          ? current.externalContributorId
-          : "",
-      partyName: "",
-    }));
-  }
+    const type =
+      event.target.value;
 
-  const selectedMember = useMemo(() => {
-    return members.find(
-      (member) =>
-        member.id === form.memberId
+
+    setForm(
+      (current) => ({
+        ...current,
+
+        contributorType:
+          type,
+
+        memberId:
+          type === "member"
+            ? current.memberId
+            : "",
+
+        externalContributorId:
+          type === "external"
+            ? current.externalContributorId
+            : "",
+
+        partyName:
+          "",
+      })
     );
-  }, [members, form.memberId]);
-
-  const filteredMembers = useMemo(() => {
-  const query = memberSearch.trim().toLowerCase();
-
-  if (!query) {
-    return members;
   }
 
-  return members.filter((member) =>
-    member.member_code.toLowerCase().includes(query) ||
-    member.full_name.toLowerCase().includes(query) ||
-    (member.address || "").toLowerCase().includes(query) ||
-    (member.household_name || "")
-      .toLowerCase()
-      .includes(query)
-  );
-}, [members, memberSearch]);
+
+  /* ========================================
+     SELECTED MEMBER
+  ======================================== */
+
+  const selectedMember =
+    useMemo(() => {
+
+      return members.find(
+        (member) =>
+          member.id ===
+          form.memberId
+      );
+
+    }, [
+      members,
+      form.memberId,
+    ]);
+
+
+  /* ========================================
+     MEMBER SEARCH
+  ======================================== */
+
+  const filteredMembers =
+    useMemo(() => {
+
+      const query =
+        memberSearch
+          .trim()
+          .toLowerCase();
+
+
+      if (!query) {
+        return members;
+      }
+
+
+      return members.filter(
+        (member) =>
+          member.member_code
+            .toLowerCase()
+            .includes(query) ||
+
+          member.full_name
+            .toLowerCase()
+            .includes(query) ||
+
+          (member.address || "")
+            .toLowerCase()
+            .includes(query) ||
+
+          (member.household_name || "")
+            .toLowerCase()
+            .includes(query)
+      );
+
+    }, [
+      members,
+      memberSearch,
+    ]);
+
+
+  /* ========================================
+     SELECTED EXTERNAL
+  ======================================== */
 
   const selectedExternal =
     useMemo(() => {
+
       return externalContributors.find(
         (contributor) =>
           contributor.id ===
           form.externalContributorId
       );
+
     }, [
       externalContributors,
       form.externalContributorId,
     ]);
 
+
+  /* ========================================
+     SELECTED FUND
+  ======================================== */
+
+  const selectedFund =
+    useMemo(() => {
+
+      return funds.find(
+        (fund) =>
+          fund.id ===
+          form.fundId
+      );
+
+    }, [
+      funds,
+      form.fundId,
+    ]);
+
+
+  /* ========================================
+     CATEGORIES FOR SELECTED FUND
+  ======================================== */
+
+  const availableCategories =
+    useMemo(() => {
+
+      if (!form.fundId) {
+        return [];
+      }
+
+
+      return categories.filter(
+        (category) =>
+          category.is_active &&
+          category.fund_id ===
+            form.fundId
+      );
+
+    }, [
+      categories,
+      form.fundId,
+    ]);
+
+
+  /* ========================================
+     PARTY NAME
+  ======================================== */
+
   useEffect(() => {
+
     if (
       form.contributorType ===
       "member"
     ) {
-      setForm((current) => ({
-        ...current,
-        partyName:
-          selectedMember?.full_name || "",
-      }));
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          partyName:
+            selectedMember?.full_name ||
+            "",
+        })
+      );
     }
+
 
     if (
       form.contributorType ===
       "external"
     ) {
-      setForm((current) => ({
-        ...current,
-        partyName:
-          selectedExternal?.full_name ||
-          selectedExternal?.organization ||
-          "",
-      }));
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          partyName:
+            selectedExternal?.full_name ||
+            selectedExternal?.organization ||
+            "",
+        })
+      );
     }
+
 
     if (
       form.contributorType ===
       "anonymous"
     ) {
-      setForm((current) => ({
-        ...current,
-        partyName: "Anonymous",
-      }));
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          partyName:
+            "Anonymous",
+        })
+      );
     }
+
   }, [
     form.contributorType,
     selectedMember,
     selectedExternal,
   ]);
 
-  async function handleSubmit(event) {
+
+  /* ========================================
+     SUBMIT
+  ======================================== */
+
+  async function handleSubmit(
+    event
+  ) {
+
     event.preventDefault();
 
     setMessage("");
     setError("");
 
+
     if (!user) {
+
       setError(
         "You must be signed in."
       );
+
       return;
     }
 
+
     const amount =
-      Number(form.amount);
+      Number(
+        form.amount
+      );
+
 
     if (!form.fundId) {
+
       setError(
         "Please select a fund."
       );
+
       return;
     }
 
-    if (!amount || amount <= 0) {
+
+    if (!form.category) {
+
+      setError(
+        "Please select an income category."
+      );
+
+      return;
+    }
+
+
+    const categoryBelongsToFund =
+      availableCategories.some(
+        (category) =>
+          category.name ===
+          form.category
+      );
+
+
+    if (
+      !categoryBelongsToFund
+    ) {
+
+      setError(
+        "The selected category does not belong to this fund."
+      );
+
+      return;
+    }
+
+
+    if (
+      !amount ||
+      amount <= 0
+    ) {
+
       setError(
         "Please enter a valid amount."
       );
+
       return;
     }
+
 
     if (
       form.contributorType ===
         "member" &&
       !form.memberId
     ) {
+
       setError(
         "Please select a Mahall member."
       );
+
       return;
     }
+
 
     if (
       form.contributorType ===
         "external" &&
       !form.externalContributorId
     ) {
+
       setError(
         "Please select an external contributor."
       );
+
       return;
     }
 
-    setSaving(true);
+
+    setSaving(
+      true
+    );
+
 
     const transactionData = {
-      fund_id: form.fundId,
 
-      type: "income",
+      fund_id:
+        form.fundId,
+
+      type:
+        "income",
 
       amount,
 
@@ -308,14 +726,14 @@ const [memberSearch, setMemberSearch] = useState("");
         form.category,
 
       description:
-        form.description ||
+        form.description.trim() ||
         null,
 
       transaction_date:
         form.transactionDate,
 
       reference_number:
-        form.referenceNumber ||
+        form.referenceNumber.trim() ||
         null,
 
       payment_method:
@@ -341,41 +759,65 @@ const [memberSearch, setMemberSearch] = useState("");
           : null,
     };
 
-    const { error } =
+
+    const {
+      error: insertError,
+    } =
       await supabase
         .from("transactions")
         .insert(
           transactionData
         );
 
-    setSaving(false);
 
-    if (error) {
-      setError(error.message);
+    setSaving(
+      false
+    );
+
+
+    if (insertError) {
+
+      setError(
+        insertError.message
+      );
+
       return;
     }
+
 
     setMessage(
       "Contribution recorded successfully."
     );
 
+
+    const defaultFund =
+      funds.find(
+        (fund) =>
+          fund.include_in_masjid_totals !== false
+      );
+
+
     setForm({
+
       contributorType:
         "member",
 
       memberId:
-        members[0]?.id || "",
+        members[0]?.id ||
+        "",
 
       externalContributorId:
         "",
 
       fundId:
-        funds[0]?.id || "",
-
-      amount: "",
+        defaultFund?.id ||
+        "",
 
       category:
-        "donation",
+        "",
+
+      amount:
+        "",
 
       description:
         "",
@@ -392,12 +834,24 @@ const [memberSearch, setMemberSearch] = useState("");
         "cash",
 
       partyName:
-        members[0]?.full_name || "",
+        members[0]?.full_name ||
+        "",
     });
+
+
+    setMemberSearch("");
   }
 
-  if (authLoading ||
-      loadingData) {
+
+  /* ========================================
+     LOADING
+  ======================================== */
+
+  if (
+    authLoading ||
+    loadingData
+  ) {
+
     return (
       <div className="admin-loading">
         Loading contribution form...
@@ -405,12 +859,18 @@ const [memberSearch, setMemberSearch] = useState("");
     );
   }
 
+
+  /* ========================================
+     PAGE
+  ======================================== */
+
   return (
     <div className="admin-form-page">
 
       <div className="admin-page-heading">
 
         <div>
+
           <p className="section-label">
             FINANCIAL MANAGEMENT
           </p>
@@ -423,16 +883,22 @@ const [memberSearch, setMemberSearch] = useState("");
             Record a contribution and link it to the
             appropriate contributor.
           </p>
+
         </div>
 
+
         <button
+          type="button"
           className="secondary-button"
-          onClick={loadData}
+          onClick={
+            loadData
+          }
         >
           ↻ Refresh
         </button>
 
       </div>
+
 
       {error && (
         <div className="form-message error">
@@ -440,11 +906,13 @@ const [memberSearch, setMemberSearch] = useState("");
         </div>
       )}
 
+
       {message && (
         <div className="form-message success">
           {message}
         </div>
       )}
+
 
       <div className="admin-form-card">
 
@@ -454,7 +922,9 @@ const [memberSearch, setMemberSearch] = useState("");
           }
         >
 
-          {/* Contributor type */}
+          {/* ==================================
+              CONTRIBUTOR TYPE
+          ================================== */}
 
           <div className="form-field">
 
@@ -488,7 +958,9 @@ const [memberSearch, setMemberSearch] = useState("");
           </div>
 
 
-          {/* Mahall member */}
+          {/* ==================================
+              MAHALL MEMBER
+          ================================== */}
 
           {form.contributorType ===
             "member" && (
@@ -497,120 +969,158 @@ const [memberSearch, setMemberSearch] = useState("");
 
               <div className="form-field">
 
-  <label>
-    Mahall Member ID
-  </label>
+                <label>
+                  Mahall Member ID
+                </label>
 
-  <input
-    type="search"
-    value={memberSearch}
-    onChange={(event) =>
-      setMemberSearch(event.target.value)
-    }
-    placeholder="Search ID, name or address..."
-    autoComplete="off"
-  />
+                <input
+                  type="search"
+                  value={
+                    memberSearch
+                  }
+                  onChange={(event) =>
+                    setMemberSearch(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Search ID, name or address..."
+                  autoComplete="off"
+                />
 
-</div>
+              </div>
 
-<div className="member-search-results">
 
-  {filteredMembers.length === 0 ? (
+              <div className="member-search-results">
 
-    <div className="member-search-empty">
-      No members found.
-    </div>
+                {filteredMembers.length ===
+                0 ? (
 
-  ) : (
+                  <div className="member-search-empty">
+                    No members found.
+                  </div>
 
-    filteredMembers
-      .slice(0, 8)
-      .map((member) => (
+                ) : (
 
-        <button
-          type="button"
-          key={member.id}
-          className={
-            form.memberId === member.id
-              ? "member-search-result selected"
-              : "member-search-result"
-          }
-          onClick={() => {
-            setForm((current) => ({
-              ...current,
-              memberId: member.id,
-            }));
+                  filteredMembers
+                    .slice(0, 8)
+                    .map(
+                      (member) => (
 
-            setMemberSearch(
-              `${member.member_code} — ${member.full_name}`
-            );
-          }}
-        >
+                        <button
+                          type="button"
+                          key={
+                            member.id
+                          }
+                          className={
+                            form.memberId ===
+                            member.id
+                              ? "member-search-result selected"
+                              : "member-search-result"
+                          }
+                          onClick={() => {
 
-          <strong>
-            {member.member_code}
-          </strong>
+                            setForm(
+                              (current) => ({
+                                ...current,
 
-          <span>
-            {member.full_name}
-          </span>
+                                memberId:
+                                  member.id,
+                              })
+                            );
 
-          {member.address && (
-            <small>
-              📍 {member.address}
-            </small>
-          )}
+                            setMemberSearch(
+                              `${member.member_code} — ${member.full_name}`
+                            );
+                          }}
+                        >
 
-        </button>
+                          <strong>
+                            {
+                              member.member_code
+                            }
+                          </strong>
 
-      ))
+                          <span>
+                            {
+                              member.full_name
+                            }
+                          </span>
 
-  )}
+                          {member.address && (
+                            <small>
+                              📍{" "}
+                              {
+                                member.address
+                              }
+                            </small>
+                          )}
 
-</div>
+                        </button>
+
+                      )
+                    )
+
+                )}
+
+              </div>
 
 
               {selectedMember && (
-  <div className="selected-contributor-card">
+                <div className="selected-contributor-card">
 
-    <span>
-      MAHALL MEMBER
-    </span>
+                  <span>
+                    MAHALL MEMBER
+                  </span>
 
-    <strong>
-      {selectedMember.member_code}
-    </strong>
+                  <strong>
+                    {
+                      selectedMember.member_code
+                    }
+                  </strong>
 
-    <strong>
-      {selectedMember.full_name}
-    </strong>
+                  <strong>
+                    {
+                      selectedMember.full_name
+                    }
+                  </strong>
 
-    {selectedMember.household_name && (
-      <small>
-        Family: {selectedMember.household_name}
-      </small>
-    )}
+                  {selectedMember.household_name && (
+                    <small>
+                      Family:{" "}
+                      {
+                        selectedMember.household_name
+                      }
+                    </small>
+                  )}
 
-    {selectedMember.address && (
-      <small>
-        📍 {selectedMember.address}
-      </small>
-    )}
+                  {selectedMember.address && (
+                    <small>
+                      📍{" "}
+                      {
+                        selectedMember.address
+                      }
+                    </small>
+                  )}
 
-    {selectedMember.phone && (
-      <small>
-        ☎ {selectedMember.phone}
-      </small>
-    )}
+                  {selectedMember.phone && (
+                    <small>
+                      ☎{" "}
+                      {
+                        selectedMember.phone
+                      }
+                    </small>
+                  )}
 
-  </div>
-)}
+                </div>
+              )}
 
             </div>
           )}
 
 
-          {/* External contributor */}
+          {/* ==================================
+              EXTERNAL CONTRIBUTOR
+          ================================== */}
 
           {form.contributorType ===
             "external" && (
@@ -640,6 +1150,7 @@ const [memberSearch, setMemberSearch] = useState("");
 
                   {externalContributors.map(
                     (contributor) => (
+
                       <option
                         key={
                           contributor.id
@@ -648,14 +1159,21 @@ const [memberSearch, setMemberSearch] = useState("");
                           contributor.id
                         }
                       >
+
                         {
                           contributor.contributor_code
-                        }{" "}
-                        —{" "}
-                        {contributor.full_name ||
+                        }
+
+                        {" — "}
+
+                        {
+                          contributor.full_name ||
                           contributor.organization ||
-                          "Unnamed contributor"}
+                          "Unnamed contributor"
+                        }
+
                       </option>
+
                     )
                   )}
 
@@ -688,7 +1206,9 @@ const [memberSearch, setMemberSearch] = useState("");
           )}
 
 
-          {/* Anonymous */}
+          {/* ==================================
+              ANONYMOUS
+          ================================== */}
 
           {form.contributorType ===
             "anonymous" && (
@@ -704,82 +1224,173 @@ const [memberSearch, setMemberSearch] = useState("");
               </strong>
 
               <small>
-                No personal contributor profile will be linked.
+                No personal contributor profile
+                will be linked.
               </small>
 
             </div>
           )}
 
 
+          {/* ==================================
+              FINANCIAL DETAILS
+          ================================== */}
+
           <div className="admin-form-grid">
 
-            {/* Fund */}
+
+            {/* FUND */}
 
             <div className="form-field">
 
-  <label>
-    Fund
-  </label>
+              <label>
+                Fund
+              </label>
 
-  <select
-    name="fundId"
-    value={form.fundId}
-    onChange={handleChange}
-    required
-  >
+              <select
+                name="fundId"
+                value={
+                  form.fundId
+                }
+                onChange={
+                  handleChange
+                }
+                required
+              >
 
-    <option value="">
-      Select fund
-    </option>
-
-
-    <optgroup label="Masjid Funds">
-
-      {funds
-        .filter(
-          (fund) =>
-            fund.include_in_masjid_totals !== false
-        )
-        .map(
-          (fund) => (
-            <option
-              key={fund.id}
-              value={fund.id}
-            >
-              {fund.name}
-            </option>
-          )
-        )}
-
-    </optgroup>
+                <option value="">
+                  Select fund
+                </option>
 
 
-    <optgroup label="Separate Funds">
+                <optgroup label="Masjid Funds">
 
-      {funds
-        .filter(
-          (fund) =>
-            fund.include_in_masjid_totals === false
-        )
-        .map(
-          (fund) => (
-            <option
-              key={fund.id}
-              value={fund.id}
-            >
-              {fund.name}
-            </option>
-          )
-        )}
+                  {funds
+                    .filter(
+                      (fund) =>
+                        fund.include_in_masjid_totals !== false
+                    )
+                    .map(
+                      (fund) => (
 
-    </optgroup>
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {
+                            fund.name
+                          }
+                        </option>
 
-  </select>
+                      )
+                    )}
 
-</div>
+                </optgroup>
 
 
-            {/* Amount */}
+                <optgroup label="Separate Funds">
+
+                  {funds
+                    .filter(
+                      (fund) =>
+                        fund.include_in_masjid_totals === false
+                    )
+                    .map(
+                      (fund) => (
+
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {
+                            fund.name
+                          }
+                        </option>
+
+                      )
+                    )}
+
+                </optgroup>
+
+              </select>
+
+            </div>
+
+
+            {/* CATEGORY */}
+
+            <div className="form-field">
+
+              <label>
+                Category
+              </label>
+
+              <select
+                name="category"
+                value={
+                  form.category
+                }
+                onChange={
+                  handleChange
+                }
+                required
+                disabled={
+                  !form.fundId
+                }
+              >
+
+                <option value="">
+                  {!form.fundId
+                    ? "Select fund first"
+                    : availableCategories.length === 0
+                      ? "No categories added"
+                      : "Select category"}
+                </option>
+
+
+                {availableCategories.map(
+                  (category) => (
+
+                    <option
+                      key={
+                        category.id
+                      }
+                      value={
+                        category.name
+                      }
+                    >
+                      {
+                        category.name
+                      }
+                    </option>
+
+                  )
+                )}
+
+              </select>
+
+
+              {form.fundId &&
+                availableCategories.length === 0 && (
+                  <small className="file-help">
+                    No categories have been added
+                    to this fund yet. Add one from
+                    Funds → Categories.
+                  </small>
+                )}
+
+            </div>
+
+
+            {/* AMOUNT */}
 
             <div className="form-field">
 
@@ -813,50 +1424,7 @@ const [memberSearch, setMemberSearch] = useState("");
             </div>
 
 
-            {/* Category */}
-
-            <div className="form-field">
-
-              <label>
-                Category
-              </label>
-
-              <select
-                name="category"
-                value={
-                  form.category
-                }
-                onChange={
-                  handleChange
-                }
-              >
-
-                <option value="donation">
-                  Donation
-                </option>
-
-                <option value="friday_collection">
-                  Friday Collection
-                </option>
-
-                <option value="zakat">
-                  Zakat
-                </option>
-
-                <option value="sadaqah">
-                  Sadaqah
-                </option>
-
-                <option value="other_income">
-                  Other Income
-                </option>
-
-              </select>
-
-            </div>
-
-
-            {/* Payment method */}
+            {/* PAYMENT METHOD */}
 
             <div className="form-field">
 
@@ -899,7 +1467,7 @@ const [memberSearch, setMemberSearch] = useState("");
             </div>
 
 
-            {/* Date */}
+            {/* DATE */}
 
             <div className="form-field">
 
@@ -922,7 +1490,7 @@ const [memberSearch, setMemberSearch] = useState("");
             </div>
 
 
-            {/* Reference */}
+            {/* REFERENCE */}
 
             <div className="form-field">
 
@@ -947,7 +1515,9 @@ const [memberSearch, setMemberSearch] = useState("");
           </div>
 
 
-          {/* Name */}
+          {/* ==================================
+              CONTRIBUTOR NAME
+          ================================== */}
 
           <div className="form-field">
 
@@ -967,7 +1537,9 @@ const [memberSearch, setMemberSearch] = useState("");
           </div>
 
 
-          {/* Description */}
+          {/* ==================================
+              DESCRIPTION
+          ================================== */}
 
           <div className="form-field">
 
@@ -990,16 +1562,27 @@ const [memberSearch, setMemberSearch] = useState("");
           </div>
 
 
+          {/* ==================================
+              SUBMIT
+          ================================== */}
+
           <div className="admin-form-actions">
 
             <button
               type="submit"
               className="primary-button"
-              disabled={saving}
+              disabled={
+                saving ||
+                !form.fundId ||
+                availableCategories.length ===
+                  0
+              }
             >
-              {saving
-                ? "Saving..."
-                : "Record Contribution"}
+              {
+                saving
+                  ? "Saving..."
+                  : "Record Contribution"
+              }
             </button>
 
           </div>
@@ -1011,5 +1594,6 @@ const [memberSearch, setMemberSearch] = useState("");
     </div>
   );
 }
+
 
 export default Donations;

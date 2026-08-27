@@ -11,6 +11,7 @@ import {
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
@@ -42,6 +43,9 @@ const navigate = useNavigate();
   useState(
     String(now.getFullYear())
   );
+
+  const [reportScope, setReportScope] =
+    useState("month");
 
 
   /* ========================================
@@ -193,11 +197,20 @@ function parseImportDate(
   value
 ) {
 
-  const raw =
-    String(
-      value || ""
-    ).trim();
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return null;
+    }
 
+    return `${value.getFullYear()}-${String(
+      value.getMonth() + 1
+    ).padStart(2, "0")}-${String(
+      value.getDate()
+    ).padStart(2, "0")}`;
+  }
+
+  const raw =
+    String(value ?? "").trim();
 
   if (!raw) {
     return null;
@@ -378,7 +391,7 @@ function normalizePaymentMethod(
 function normalizeCategory(
   type,
   value,
-  expenseCategoryMap
+  incomeCategoryMap
 ) {
 
   const raw =
@@ -386,60 +399,22 @@ function normalizeCategory(
       value || ""
     ).trim();
 
-
   if (!raw) {
     return null;
   }
 
-
-  if (
-    type ===
-    "expense"
-  ) {
-
-    const key =
-      raw.toLowerCase();
-
-
-    return (
-      expenseCategoryMap.get(
-        key
-      ) || null
-    );
+  /* Expenses are free-text. The category column is
+     simply the answer to: what was this expense for? */
+  if (type === "expense") {
+    return raw;
   }
 
-
-  const donationCategories = {
-    donation:
-      "donation",
-
-    "general donation":
-      "donation",
-
-    friday_collection:
-      "friday_collection",
-
-    "friday collection":
-      "friday_collection",
-
-    zakat:
-      "zakat",
-
-    sadaqah:
-      "sadaqah",
-
-    "other income":
-      "other_income",
-
-    other_income:
-      "other_income",
-  };
-
-
+  /* Income categories must be configured under the
+     selected fund in Funds -> Categories. */
   return (
-    donationCategories[
+    incomeCategoryMap.get(
       raw.toLowerCase()
-    ] || null
+    ) || null
   );
 }
 
@@ -486,7 +461,6 @@ function readCSV(
     "type",
     "amount",
     "fund",
-    "category",
   ];
 
 
@@ -499,18 +473,32 @@ function readCSV(
     );
 
 
-  if (
-    missing.length
-  ) {
+  const categoryHeader =
+    [
+      "category",
+      "income_category",
+      "expense_purpose",
+      "expense_description",
+    ].find(
+      (header) =>
+        headers.includes(
+          header
+        )
+    );
 
+
+  if (!categoryHeader) {
+    missing.push(
+      "category (or income_category / expense_purpose)"
+    );
+  }
+
+
+  if (missing.length) {
     throw new Error(
       `Missing required column${
-        missing.length > 1
-          ? "s"
-          : ""
-      }: ${missing.join(
-        ", "
-      )}`
+        missing.length > 1 ? "s" : ""
+      }: ${missing.join(", ")}`
     );
   }
 
@@ -567,7 +555,12 @@ function readCSV(
             raw.fund,
 
           category:
-            raw.category,
+            raw[categoryHeader] ||
+            raw.category ||
+            raw.income_category ||
+            raw.expense_purpose ||
+            raw.expense_description ||
+            "",
 
           partyName:
             raw.party_name ||
@@ -600,6 +593,127 @@ function readCSV(
 }
 
 
+
+function readSpreadsheetRows(buffer) {
+
+  const workbook = XLSX.read(buffer, {
+    type: "array",
+    cellDates: true,
+    raw: false,
+  });
+
+  const firstSheetName = workbook.SheetNames[0];
+
+  if (!firstSheetName) {
+    throw new Error("The Excel file does not contain a worksheet.");
+  }
+
+  const worksheet = workbook.Sheets[firstSheetName];
+
+  const matrix = XLSX.utils.sheet_to_json(
+    worksheet,
+    {
+      header: 1,
+      defval: "",
+      raw: false,
+      blankrows: false,
+    }
+  );
+
+  if (!matrix.length) {
+    throw new Error(
+      "The Excel file is empty. Add a header row and at least one transaction."
+    );
+  }
+
+  const headers = (matrix[0] || []).map(normalizeHeader);
+
+  const required = [
+    "date",
+    "type",
+    "amount",
+    "fund",
+  ];
+
+  const missing = required.filter(
+    (header) => !headers.includes(header)
+  );
+
+  const categoryHeader = [
+    "category",
+    "income_category",
+    "expense_purpose",
+    "expense_description",
+  ].find((header) => headers.includes(header));
+
+  if (!categoryHeader) {
+    missing.push(
+      "category (or income_category / expense_purpose)"
+    );
+  }
+
+  if (missing.length) {
+    throw new Error(
+      `Missing required column${
+        missing.length > 1 ? "s" : ""
+      }: ${missing.join(", ")}`
+    );
+  }
+
+  return matrix
+    .slice(1)
+    .map((values, index) => {
+      const raw = {};
+
+      headers.forEach((header, headerIndex) => {
+        raw[header] =
+          values[headerIndex] === undefined ||
+          values[headerIndex] === null
+            ? ""
+            : values[headerIndex];
+      });
+
+      return {
+        rowNumber: index + 2,
+        date: raw.date,
+        type: raw.type,
+        amount: raw.amount,
+        fund: raw.fund,
+        category:
+          raw[categoryHeader] ||
+          raw.category ||
+          raw.income_category ||
+          raw.expense_purpose ||
+          raw.expense_description ||
+          "",
+        partyName:
+          raw.party_name ||
+          raw.party ||
+          "",
+        paymentMethod:
+          raw.payment_method ||
+          "",
+        referenceNumber:
+          raw.reference ||
+          raw.reference_number ||
+          "",
+        description:
+          raw.description ||
+          "",
+        memberCode:
+          raw.member_code ||
+          "",
+        externalContributorCode:
+          raw.external_contributor_code ||
+          "",
+      };
+    });
+}
+
+function csvTextToBuffer(text) {
+  return new TextEncoder().encode(text).buffer;
+}
+
 async function prepareImportFile(
   event
 ) {
@@ -608,128 +722,166 @@ async function prepareImportFile(
   setImportErrors([]);
   setImportResult(null);
 
-
   const file =
     event.target.files?.[0];
-
 
   if (!file) {
     return;
   }
 
+  const fileName =
+    file.name.toLowerCase();
 
-  if (
-    !file.name
-      .toLowerCase()
-      .endsWith(".csv")
-  ) {
+  const isCsv =
+    fileName.endsWith(".csv");
 
+  const isExcel =
+    fileName.endsWith(".xlsx") ||
+    fileName.endsWith(".xls");
+
+  if (!isCsv && !isExcel) {
     setError(
-      "Please choose a CSV file."
+      "Please choose a CSV or Excel (.xlsx/.xls) file."
     );
 
-    event.target.value =
-      "";
-
+    event.target.value = "";
     return;
   }
 
-
   try {
 
-    const text =
-      await file.text();
+    let rows;
 
+    if (isCsv) {
+      const buffer =
+        await file.arrayBuffer();
 
-    const rows =
-      readCSV(
-        text
+      const text =
+        new TextDecoder("utf-8")
+          .decode(buffer)
+          .replace(/^\uFEFF/, "");
+
+      rows = readCSV(text);
+    } else {
+      const buffer =
+        await file.arrayBuffer();
+
+      rows = readSpreadsheetRows(buffer);
+    }
+
+    if (!rows.length) {
+      throw new Error(
+        "No transaction rows were found in the uploaded file."
       );
+    }
 
+    setImportFile(file);
+    setImportRows(rows);
 
-    setImportFile(
-      file
-    );
+  } catch (importError) {
 
-    setImportRows(
-      rows
-    );
-
-  } catch (
-    importError
-  ) {
-
-    setImportFile(
-      null
-    );
-
+    setImportFile(null);
     setImportRows([]);
 
     setError(
-      importError.message
+      importError?.message ||
+        "Unable to read the selected file."
     );
 
-    event.target.value =
-      "";
+    event.target.value = "";
   }
 }
 
 
 function downloadTransactionTemplate() {
 
-  const csv = [
-    "date,type,amount,fund,category,party_name,payment_method,reference,description,member_code,external_contributor_code",
+  const rows = [
+    [
+      "date",
+      "type",
+      "amount",
+      "fund",
+      "category",
+      "party_name",
+      "payment_method",
+      "reference",
+      "description",
+      "member_code",
+      "external_contributor_code",
+    ],
 
-    "15/03/2024,income,5000,General Fund,donation,Ahmed Ali,cash,,Friday donation,MH-0001,",
+    [
+      "30/09/2025",
+      "income",
+      26130,
+      "General Masjid Fund",
+      "മദ്‌റസ ഫീസ് 2025-26",
+      "NO NAME - ALL FUND",
+      "cash",
+      "",
+      "September madrasa fees",
+      "",
+      "",
+    ],
 
-    "18/03/2024,expense,1200,General Fund,Electricity,Kerala Electricity,bank_transfer,ELEC-124,March electricity bill,,",
-  ].join(
-    "\n"
+    [
+      "30/09/2025",
+      "expense",
+      1095,
+      "General Masjid Fund",
+      "പ്ലംബിംഗ്",
+      "",
+      "cash",
+      "",
+      "September plumbing expense",
+      "",
+      "",
+    ],
+
+    [
+      "30/09/2025",
+      "income",
+      800,
+      "സാധു ഫണ്ട് കളക്ഷൻ",
+      "മാസാന്ത കളക്ഷൻ",
+      "NO NAME - ALL FUND",
+      "cash",
+      "",
+      "September sadhu collection",
+      "",
+      "",
+    ],
+  ];
+
+  const worksheet =
+    XLSX.utils.aoa_to_sheet(rows);
+
+  worksheet["!cols"] = [
+    { wch: 15 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 28 },
+    { wch: 34 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 34 },
+    { wch: 18 },
+    { wch: 28 },
+  ];
+
+  const workbook =
+    XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    "Transactions"
   );
 
-
-  const blob =
-    new Blob(
-      [csv],
-      {
-        type:
-          "text/csv;charset=utf-8;",
-      }
-    );
-
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-
-  const anchor =
-    document.createElement(
-      "a"
-    );
-
-
-  anchor.href =
-    url;
-
-  anchor.download =
-    "historical-transactions-template.csv";
-
-
-  document.body.appendChild(
-    anchor
-  );
-
-  anchor.click();
-
-  document.body.removeChild(
-    anchor
-  );
-
-
-  URL.revokeObjectURL(
-    url
+  XLSX.writeFile(
+    workbook,
+    "historical-transactions-template.xlsx"
   );
 }
 
@@ -738,543 +890,311 @@ async function validateImportRows() {
 
   const [
     fundsResult,
-    expenseCategoriesResult,
+    incomeCategoriesResult,
     membersResult,
     externalResult,
     transactionsResult,
-  ] =
-    await Promise.all([
+  ] = await Promise.all([
 
-      supabase
-        .from("funds")
-        .select(
-          "id, name"
-        ),
+    supabase
+      .from("funds")
+      .select("id, name"),
 
-      supabase
-        .from(
-          "expense_categories"
-        )
-        .select(
-          "id, name, is_active"
-        ),
+    supabase
+      .from("fund_categories")
+      .select("id, name, is_active, fund_id")
+      .eq("is_active", true),
 
-      supabase
-        .from(
-          "mahall_members"
-        )
-        .select(
-          "id, member_code"
-        ),
+    supabase
+      .from("mahall_members")
+      .select("id, member_code"),
 
-      supabase
-        .from(
-          "external_contributors"
-        )
-        .select(
-          "id, contributor_code"
-        ),
+    supabase
+      .from("external_contributors")
+      .select("id, contributor_code"),
 
-      supabase
-        .from("transactions")
-        .select(`
-          id,
-          type,
-          amount,
-          fund_id,
-          category,
-          transaction_date,
-          party_name,
-          reference_number
-        `),
-    ]);
+    supabase
+      .from("transactions")
+      .select(`
+        id,
+        type,
+        amount,
+        fund_id,
+        category,
+        transaction_date,
+        party_name,
+        reference_number
+      `),
+  ]);
 
 
+  for (const result of [
+    fundsResult,
+    incomeCategoriesResult,
+    membersResult,
+    externalResult,
+    transactionsResult,
+  ]) {
+    if (result.error) throw result.error;
+  }
+
+
+  const fundsByName = new Map();
+
+  (fundsResult.data || []).forEach((fund) => {
+    fundsByName.set(
+      fund.name.trim().toLowerCase(),
+      fund
+    );
+  });
+
+
+  const incomeCategoriesByFund = new Map();
+
+  (incomeCategoriesResult.data || []).forEach((category) => {
+
+    if (!category.fund_id) return;
+
+    if (!incomeCategoriesByFund.has(category.fund_id)) {
+      incomeCategoriesByFund.set(
+        category.fund_id,
+        new Map()
+      );
+    }
+
+    incomeCategoriesByFund
+      .get(category.fund_id)
+      .set(
+        category.name.trim().toLowerCase(),
+        category.name
+      );
+  });
+
+
+  const membersByCode = new Map();
+
+  (membersResult.data || []).forEach((item) => {
+    membersByCode.set(
+      item.member_code.trim().toLowerCase(),
+      item
+    );
+  });
+
+
+  const externalByCode = new Map();
+
+  (externalResult.data || []).forEach((item) => {
+    externalByCode.set(
+      item.contributor_code.trim().toLowerCase(),
+      item
+    );
+  });
+
+
+  const existingSignatures = new Set();
+
+  (transactionsResult.data || []).forEach((transaction) => {
+    existingSignatures.add(
+      [
+        transaction.transaction_date,
+        transaction.type,
+        Number(transaction.amount),
+        transaction.fund_id,
+        transaction.category,
+        (transaction.party_name || "").trim().toLowerCase(),
+        (transaction.reference_number || "").trim().toLowerCase(),
+      ].join("|")
+    );
+  });
+
+
+  const validRows = [];
   const resultErrors = [];
 
 
-  if (
-    fundsResult.error
-  ) {
-    throw fundsResult.error;
-  }
+  importRows.forEach((row) => {
 
+    const errors = [];
 
-  if (
-    expenseCategoriesResult.error
-  ) {
-    throw expenseCategoriesResult.error;
-  }
+    const date = parseImportDate(row.date);
 
+    if (!date) {
+      errors.push("Invalid date. Use DD/MM/YYYY or YYYY-MM-DD.");
+    }
 
-  if (
-    membersResult.error
-  ) {
-    throw membersResult.error;
-  }
+    const type = normalizeTransactionType(row.type);
 
+    if (!type) {
+      errors.push("Type must be income/donation or expense.");
+    }
 
-  if (
-    externalResult.error
-  ) {
-    throw externalResult.error;
-  }
+    const amount = Number(
+      String(row.amount)
+        .replace(/₹/g, "")
+        .replace(/,/g, "")
+        .trim()
+    );
 
+    if (!Number.isFinite(amount) || amount <= 0) {
+      errors.push("Amount must be greater than zero.");
+    }
 
-  if (
-    transactionsResult.error
-  ) {
-    throw transactionsResult.error;
-  }
+    const fund = fundsByName.get(
+      String(row.fund || "")
+        .trim()
+        .toLowerCase()
+    );
 
+    if (!fund) {
+      errors.push(`Fund "${row.fund}" was not found.`);
+    }
 
-  const fundsByName =
-    new Map();
+    let category = null;
 
+    if (type === "expense") {
 
-  (
-    fundsResult.data ||
-    []
-  ).forEach(
-    (fund) => {
-
-      fundsByName.set(
-        fund.name
-          .trim()
-          .toLowerCase(),
-        fund
+      category = normalizeCategory(
+        type,
+        row.category,
+        new Map()
       );
-    }
-  );
-
-
-  const expenseCategoryMap =
-    new Map();
-
-
-  (
-    expenseCategoriesResult.data ||
-    []
-  ).forEach(
-    (category) => {
-
-      if (
-        category.is_active
-      ) {
-
-        expenseCategoryMap.set(
-          category.name
-            .trim()
-            .toLowerCase(),
-          category.name
-        );
-      }
-    }
-  );
-
-
-  const membersByCode =
-    new Map();
-
-
-  (
-    membersResult.data ||
-    []
-  ).forEach(
-    (item) => {
-
-      membersByCode.set(
-        item.member_code
-          .trim()
-          .toLowerCase(),
-        item
-      );
-    }
-  );
-
-
-  const externalByCode =
-    new Map();
-
-
-  (
-    externalResult.data ||
-    []
-  ).forEach(
-    (item) => {
-
-      externalByCode.set(
-        item.contributor_code
-          .trim()
-          .toLowerCase(),
-        item
-      );
-    }
-  );
-
-
-  const existingSignatures =
-    new Set();
-
-
-  (
-    transactionsResult.data ||
-    []
-  ).forEach(
-    (transaction) => {
-
-      existingSignatures.add(
-        [
-          transaction.transaction_date,
-          transaction.type,
-          Number(
-            transaction.amount
-          ),
-          transaction.fund_id,
-          transaction.category,
-          (
-            transaction.party_name ||
-            ""
-          ).trim().toLowerCase(),
-          (
-            transaction.reference_number ||
-            ""
-          ).trim().toLowerCase(),
-        ].join("|")
-      );
-
-    }
-  );
-
-
-  const validRows =
-    [];
-
-
-  importRows.forEach(
-    (row) => {
-
-      const errors = [];
-
-
-      const date =
-        parseImportDate(
-          row.date
-        );
-
-
-      if (!date) {
-
-        errors.push(
-          "Invalid date."
-        );
-      }
-
-
-      const type =
-        normalizeTransactionType(
-          row.type
-        );
-
-
-      if (!type) {
-
-        errors.push(
-          "Type must be income/donation or expense."
-        );
-      }
-
-
-      const amount =
-        Number(
-          String(
-            row.amount
-          )
-            .replace(
-              /₹/g,
-              ""
-            )
-            .replace(
-              /,/g,
-              ""
-            )
-            .trim()
-        );
-
-
-      if (
-        !Number.isFinite(
-          amount
-        ) ||
-        amount <= 0
-      ) {
-
-        errors.push(
-          "Amount must be greater than zero."
-        );
-      }
-
-
-      const fund =
-        fundsByName.get(
-          String(
-            row.fund ||
-              ""
-          )
-            .trim()
-            .toLowerCase()
-        );
-
-
-      if (!fund) {
-
-        errors.push(
-          `Fund "${row.fund}" was not found.`
-        );
-      }
-
-
-      const category =
-        type
-          ? normalizeCategory(
-              type,
-              row.category,
-              expenseCategoryMap
-            )
-          : null;
-
 
       if (!category) {
-
         errors.push(
-          type ===
-            "expense"
-
-            ? `Expense category "${row.category}" was not found or is inactive.`
-
-            : `Donation category "${row.category}" is not valid.`
+          "Expense purpose is required. Enter what the expense was for."
         );
       }
 
+    } else if (type === "income") {
 
-      const paymentMethod =
-        normalizePaymentMethod(
-          row.paymentMethod
-        );
+      const categoryMap =
+        fund
+          ? incomeCategoriesByFund.get(fund.id) || new Map()
+          : new Map();
 
+      category = normalizeCategory(
+        type,
+        row.category,
+        categoryMap
+      );
 
-      if (
-        row.paymentMethod &&
-        !paymentMethod
-      ) {
-
+      if (!category) {
         errors.push(
-          `Payment method "${row.paymentMethod}" is not supported.`
+          fund
+            ? `Income category "${row.category}" is not active or does not belong to fund "${fund.name}".`
+            : `Income category "${row.category}" is not valid.`
         );
       }
-
-
-      let memberId =
-        null;
-
-
-      if (
-        row.memberCode
-      ) {
-
-        const member =
-          membersByCode.get(
-            row.memberCode
-              .trim()
-              .toLowerCase()
-          );
-
-
-        if (!member) {
-
-          errors.push(
-            `Mahall member "${row.memberCode}" was not found.`
-          );
-
-        } else {
-
-          memberId =
-            member.id;
-        }
-      }
-
-
-      let externalContributorId =
-        null;
-
-
-      if (
-        row.externalContributorCode
-      ) {
-
-        const contributor =
-          externalByCode.get(
-            row.externalContributorCode
-              .trim()
-              .toLowerCase()
-          );
-
-
-        if (!contributor) {
-
-          errors.push(
-            `External contributor "${row.externalContributorCode}" was not found.`
-          );
-
-        } else {
-
-          externalContributorId =
-            contributor.id;
-        }
-      }
-
-
-      const signature =
-        fund &&
-        category &&
-        date &&
-        type
-          ? [
-              date,
-              type,
-              amount,
-              fund.id,
-              category,
-              (
-                row.partyName ||
-                ""
-              )
-                .trim()
-                .toLowerCase(),
-              (
-                row.referenceNumber ||
-                ""
-              )
-                .trim()
-                .toLowerCase(),
-            ].join("|")
-          : null;
-
-
-      if (
-        signature &&
-        existingSignatures.has(
-          signature
-        )
-      ) {
-
-        errors.push(
-          "This transaction already appears to exist."
-        );
-      }
-
-
-      if (
-        signature &&
-        validRows.some(
-          (item) =>
-            item.signature ===
-            signature
-        )
-      ) {
-
-        errors.push(
-          "Duplicate transaction inside this CSV."
-        );
-      }
-
-
-      if (
-        errors.length
-      ) {
-
-        resultErrors.push({
-          rowNumber:
-            row.rowNumber,
-
-          errors,
-        });
-
-        return;
-      }
-
-
-      validRows.push({
-        original:
-          row,
-
-        rowNumber:
-          row.rowNumber,
-
-        transaction: {
-          fund_id:
-            fund.id,
-
-          type,
-
-          amount,
-
-          category,
-
-          description:
-            row.description.trim() ||
-            null,
-
-          transaction_date:
-            date,
-
-          reference_number:
-            row.referenceNumber.trim() ||
-            null,
-
-          payment_method:
-            paymentMethod ||
-            "cash",
-
-          party_name:
-            row.partyName.trim() ||
-            null,
-
-          created_by:
-            user.id,
-
-          mahall_member_id:
-            memberId,
-
-          external_contributor_id:
-            externalContributorId,
-        },
-
-        signature,
-      });
-
     }
-  );
+
+    const paymentMethod = normalizePaymentMethod(
+      row.paymentMethod
+    );
+
+    if (row.paymentMethod && !paymentMethod) {
+      errors.push(
+        `Payment method "${row.paymentMethod}" is not supported.`
+      );
+    }
+
+    let memberId = null;
+
+    if (row.memberCode) {
+
+      const member = membersByCode.get(
+        row.memberCode.trim().toLowerCase()
+      );
+
+      if (!member) {
+        errors.push(
+          `Mahall member "${row.memberCode}" was not found.`
+        );
+      } else {
+        memberId = member.id;
+      }
+    }
+
+    let externalContributorId = null;
+
+    if (row.externalContributorCode) {
+
+      const contributor = externalByCode.get(
+        row.externalContributorCode.trim().toLowerCase()
+      );
+
+      if (!contributor) {
+        errors.push(
+          `External contributor "${row.externalContributorCode}" was not found.`
+        );
+      } else {
+        externalContributorId = contributor.id;
+      }
+    }
+
+    const signature =
+      fund && category && date && type
+        ? [
+            date,
+            type,
+            amount,
+            fund.id,
+            category,
+            (row.partyName || "").trim().toLowerCase(),
+            (row.referenceNumber || "").trim().toLowerCase(),
+          ].join("|")
+        : null;
+
+    if (signature && existingSignatures.has(signature)) {
+      errors.push("This transaction already appears to exist.");
+    }
+
+    if (signature && validRows.some((item) => item.signature === signature)) {
+      errors.push("Duplicate transaction inside this CSV.");
+    }
+
+    if (errors.length) {
+      resultErrors.push({
+        rowNumber: row.rowNumber,
+        errors,
+      });
+      return;
+    }
+
+    validRows.push({
+      original: row,
+      rowNumber: row.rowNumber,
+      signature,
+      transaction: {
+        fund_id: fund.id,
+        type,
+        amount,
+        category,
+        description: row.description.trim() || null,
+        transaction_date: date,
+        reference_number: row.referenceNumber.trim() || null,
+        payment_method: paymentMethod || "cash",
+        party_name: row.partyName.trim() || null,
+        created_by: user.id,
+        mahall_member_id: memberId,
+        external_contributor_id: externalContributorId,
+      },
+    });
+  });
 
 
   return {
     validRows,
-    errors:
-      resultErrors,
+    errors: resultErrors,
   };
 }
 
 
 async function runTransactionImport() {
 
-  if (
-    !canImportTransactions
-  ) {
-
+  if (!canImportTransactions) {
     setError(
       "Only administrators and treasurers can import transactions."
     );
-
     return;
   }
 
@@ -1287,107 +1207,62 @@ async function runTransactionImport() {
 
   try {
 
-    const {
-      validRows,
-      errors,
-    } =
+    const { validRows, errors } =
       await validateImportRows();
 
-
-    if (
-      errors.length
-    ) {
-
-      setImportErrors(
-        errors
-      );
-
-      setImporting(
-        false
-      );
-
+    if (errors.length) {
+      setImportErrors(errors);
       return;
     }
 
-
-    let imported =
-      0;
-
-
-    const failed =
-      [];
-
-
-    for (
-      const item of validRows
-    ) {
-
-      const {
-        error:
-          insertError,
-      } =
-        await supabase
-          .from(
-            "transactions"
-          )
-          .insert(
-            item.transaction
-          );
-
-
-      if (
-        insertError
-      ) {
-
-        failed.push({
-          rowNumber:
-            item.rowNumber,
-
-          errors: [
-            insertError.message,
-          ],
-        });
-
-      } else {
-
-        imported++;
-      }
+    if (!validRows.length) {
+      setImportResult({
+        imported: 0,
+        failed: 0,
+      });
+      return;
     }
 
+    const { error: insertError } =
+      await supabase
+        .from("transactions")
+        .insert(
+          validRows.map(
+            (item) => item.transaction
+          )
+        );
+
+    if (insertError) {
+      setImportResult({
+        imported: 0,
+        failed: validRows.length,
+      });
+
+      setImportErrors([
+        {
+          rowNumber: "Import",
+          errors: [insertError.message],
+        },
+      ]);
+      return;
+    }
+
+    const imported = validRows.length;
 
     setImportResult({
       imported,
-
-      failed:
-        failed.length,
+      failed: 0,
     });
 
-
-    setImportErrors(
-      failed
+    setMessage(
+      `${imported} historical transaction${
+        imported === 1 ? "" : "s"
+      } imported successfully.`
     );
 
+    await loadReportData();
 
-    if (
-      imported > 0
-    ) {
-
-      setMessage(
-        `${imported} historical transaction${
-          imported === 1
-            ? ""
-            : "s"
-        } imported successfully.`
-      );
-
-
-      await loadReportData();
-    }
-
-
-  } catch (
-    importError
-  ) {
+  } catch (importError) {
 
     setError(
       importError?.message ||
@@ -1395,12 +1270,11 @@ async function runTransactionImport() {
     );
 
   } finally {
-
-    setImporting(
-      false
-    );
+    setImporting(false);
   }
 }
+
+
   /* ========================================
      LOAD REPORT DATA
   ======================================== */
@@ -1565,6 +1439,10 @@ async function runTransactionImport() {
     value
   ) {
 
+    if (!value) {
+      return "Full Year";
+    }
+
     const [
       year,
       month,
@@ -1589,77 +1467,78 @@ async function runTransactionImport() {
   }
 
 
+  function getReportPeriodLabel() {
+
+    if (reportScope === "all") {
+      return "All Years";
+    }
+
+    if (reportScope === "year") {
+      return `${selectedYear} — Full Year`;
+    }
+
+    return formatMonthLabel(selectedMonth);
+  }
+
+
   /* ========================================
-     MONTH BOUNDARIES
+     REPORT PERIOD
   ======================================== */
 
   const period = useMemo(() => {
 
-    const [
-      year,
-      month,
-    ] =
-      selectedMonth
-        .split("-")
-        .map(Number);
+    if (reportScope === "all") {
+      if (!transactions.length) {
+        return {
+          start: "0000-01-01",
+          end: "9999-12-31",
+          previousEnd: null,
+        };
+      }
 
+      const dates = transactions
+        .map((transaction) => transaction.transaction_date)
+        .filter(Boolean)
+        .sort();
 
-    const start =
-      new Date(
-        year,
-        month - 1,
-        1
-      );
-
-
-    const end =
-      new Date(
-        year,
-        month,
-        0
-      );
-
-
-    const previousEnd =
-      new Date(
-        year,
-        month - 1,
-        0
-      );
-
-
-    function toDateString(
-      date
-    ) {
-
-      return date
-        .toISOString()
-        .split("T")[0];
+      return {
+        start: dates[0],
+        end: dates[dates.length - 1],
+        previousEnd: null,
+      };
     }
 
+    if (reportScope === "year") {
+      const year = Number(selectedYear);
+
+      return {
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+        previousEnd: `${year - 1}-12-31`,
+      };
+    }
+
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const monthString = String(month).padStart(2, "0");
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+    const previousYear = month === 1 ? year - 1 : year;
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const previousMonthString = String(previousMonth).padStart(2, "0");
+    const previousLastDay = new Date(Date.UTC(previousYear, previousMonth, 0)).getUTCDate();
 
     return {
-      start:
-        toDateString(
-          start
-        ),
-
-      end:
-        toDateString(
-          end
-        ),
-
-      previousEnd:
-        toDateString(
-          previousEnd
-        ),
+      start: `${year}-${monthString}-01`,
+      end: `${year}-${monthString}-${String(lastDay).padStart(2, "0")}`,
+      previousEnd: `${previousYear}-${previousMonthString}-${String(previousLastDay).padStart(2, "0")}`,
     };
 
   }, [
     selectedMonth,
+    selectedYear,
+    reportScope,
+    transactions,
   ]);
-
-
   /* ========================================
      SELECTED MONTH TRANSACTIONS
   ======================================== */
@@ -1685,15 +1564,31 @@ async function runTransactionImport() {
      FILTERED TRANSACTIONS
   ======================================== */
 
+  const transactionBrowseSource =
+    useMemo(() => {
+
+      if (
+        transactionFromDate ||
+        transactionToDate
+      ) {
+        return transactions;
+      }
+
+      return monthlyTransactions;
+
+    }, [
+      transactions,
+      monthlyTransactions,
+      transactionFromDate,
+      transactionToDate,
+    ]);
+
+
   const filteredTransactions =
     useMemo(() => {
 
-      return monthlyTransactions.filter(
+      return transactionBrowseSource.filter(
         (transaction) => {
-
-          /* -----------------------------
-             TRANSACTION TYPE
-          ----------------------------- */
 
           if (
             transactionTypeFilter !==
@@ -1701,45 +1596,31 @@ async function runTransactionImport() {
             transaction.type !==
               transactionTypeFilter
           ) {
-
             return false;
           }
-
-
-          /* -----------------------------
-             FROM DATE
-          ----------------------------- */
 
           if (
             transactionFromDate &&
             transaction.transaction_date <
               transactionFromDate
           ) {
-
             return false;
           }
-
-
-          /* -----------------------------
-             TO DATE
-          ----------------------------- */
 
           if (
             transactionToDate &&
             transaction.transaction_date >
               transactionToDate
           ) {
-
             return false;
           }
-
 
           return true;
         }
       );
 
     }, [
-      monthlyTransactions,
+      transactionBrowseSource,
       transactionTypeFilter,
       transactionFromDate,
       transactionToDate,
@@ -1801,7 +1682,12 @@ async function runTransactionImport() {
       .filter(
         (transaction) =>
           transaction.type ===
-          "income"
+            "income" &&
+          funds.find(
+            (fund) =>
+              fund.id ===
+              transaction.fund_id
+          )?.include_in_masjid_totals !== false
       )
       .reduce(
         (
@@ -1817,6 +1703,7 @@ async function runTransactionImport() {
 
   }, [
     monthlyTransactions,
+    funds,
   ]);
 
   /* ========================================
@@ -1881,47 +1768,61 @@ const monthlyBalanceRegister =
       month++
     ) {
 
-      const monthStart =
-        new Date(
-          year,
-          month - 1,
-          1
+      /*
+       * Build month boundaries as plain
+       * YYYY-MM-DD strings.
+       *
+       * Do not use toISOString() here.
+       * JavaScript UTC conversion can shift
+       * dates backward by one day in India.
+       */
+
+      const monthString =
+        String(month).padStart(
+          2,
+          "0"
         );
 
-      const monthEnd =
+      const lastDay =
         new Date(
-          year,
-          month,
-          0
-        );
-
+          Date.UTC(
+            year,
+            month,
+            0
+          )
+        ).getUTCDate();
 
       const startString =
-        monthStart
-          .toISOString()
-          .split("T")[0];
+        `${year}-${monthString}-01`;
 
       const endString =
-        monthEnd
-          .toISOString()
-          .split("T")[0];
+        `${year}-${monthString}-${String(
+          lastDay
+        ).padStart(2, "0")}`;
 
+
+      /*
+       * Only transactions belonging to
+       * Masjid funds participate in this
+       * overall register.
+       */
 
       const beforeMonth =
-  transactions.filter(
-    (transaction) =>
-      transaction.transaction_date <
-        startString &&
-      funds.find(
-        (fund) =>
-          fund.id ===
-          transaction.fund_id
-      )?.include_in_masjid_totals !== false
-  );
+        transactions.filter(
+          (transaction) =>
+            transaction.transaction_date <
+              startString &&
+            funds.find(
+              (fund) =>
+                fund.id ===
+                transaction.fund_id
+            )?.include_in_masjid_totals !== false
+        );
+
 
       /*
        * Opening balance is the complete
-       * financial balance before this month.
+       * Masjid balance before this month.
        */
 
       const opening =
@@ -1936,7 +1837,6 @@ const monthlyBalanceRegister =
                 transaction.amount
               );
 
-
             return transaction.type ===
               "income"
               ? total + amount
@@ -1947,19 +1847,23 @@ const monthlyBalanceRegister =
         );
 
 
+      /*
+       * Transactions inside this month.
+       */
+
       const monthTransactions =
-  transactions.filter(
-    (transaction) =>
-      transaction.transaction_date >=
-        startString &&
-      transaction.transaction_date <=
-        endString &&
-      funds.find(
-        (fund) =>
-          fund.id ===
-          transaction.fund_id
-      )?.include_in_masjid_totals !== false
-  );
+        transactions.filter(
+          (transaction) =>
+            transaction.transaction_date >=
+              startString &&
+            transaction.transaction_date <=
+              endString &&
+            funds.find(
+              (fund) =>
+                fund.id ===
+                transaction.fund_id
+            )?.include_in_masjid_totals !== false
+        );
 
 
       const income =
@@ -2008,21 +1912,35 @@ const monthlyBalanceRegister =
         expenses;
 
 
+      /*
+       * Use UTC only to obtain the month
+       * name without any timezone rollover.
+       */
+
+      const monthLabel =
+        new Date(
+          Date.UTC(
+            year,
+            month - 1,
+            1
+          )
+        ).toLocaleDateString(
+          "en-IN",
+          {
+            month: "long",
+            timeZone: "UTC",
+          }
+        );
+
+
       rows.push({
+
         month,
 
         monthValue:
-          `${year}-${String(
-            month
-          ).padStart(2, "0")}`,
+          `${year}-${monthString}`,
 
-        monthLabel:
-          monthStart.toLocaleDateString(
-            "en-IN",
-            {
-              month: "long",
-            }
-          ),
+        monthLabel,
 
         opening,
 
@@ -2033,20 +1951,16 @@ const monthlyBalanceRegister =
         closing,
       });
 
-
     }
 
 
     return rows;
 
   }, [
-  transactions,
-  funds,
-  selectedYear,
-]);
-  /* ========================================
-   FUND-WISE MONTHLY REPORT
-======================================== */
+    transactions,
+    funds,
+    selectedYear,
+  ]);
 
 const fundReport =
   useMemo(() => {
@@ -2286,6 +2200,67 @@ const separateFundReport =
   ]);
 
   /* ========================================
+     ALL-YEARS ANNUAL BALANCE REGISTER
+  ======================================== */
+
+  const annualBalanceRegister = useMemo(() => {
+
+    const years = Array.from(
+      new Set(
+        transactions
+          .map((transaction) => transaction.transaction_date?.slice(0, 4))
+          .filter(Boolean)
+      )
+    ).sort();
+
+    return years.map((year) => {
+      const start = `${year}-01-01`;
+      const end = `${year}-12-31`;
+
+      const isMasjidFund = (transaction) =>
+        funds.find((fund) => fund.id === transaction.fund_id)
+          ?.include_in_masjid_totals !== false;
+
+      const before = transactions.filter(
+        (transaction) => transaction.transaction_date < start && isMasjidFund(transaction)
+      );
+
+      const current = transactions.filter(
+        (transaction) =>
+          transaction.transaction_date >= start &&
+          transaction.transaction_date <= end &&
+          isMasjidFund(transaction)
+      );
+
+      const opening = before.reduce(
+        (total, transaction) =>
+          transaction.type === "income"
+            ? total + Number(transaction.amount || 0)
+            : total - Number(transaction.amount || 0),
+        0
+      );
+
+      const income = current
+        .filter((transaction) => transaction.type === "income")
+        .reduce((total, transaction) => total + Number(transaction.amount || 0), 0);
+
+      const expenses = current
+        .filter((transaction) => transaction.type === "expense")
+        .reduce((total, transaction) => total + Number(transaction.amount || 0), 0);
+
+      return {
+        year,
+        opening,
+        income,
+        expenses,
+        closing: opening + income - expenses,
+      };
+    });
+
+  }, [transactions, funds]);
+
+
+  /* ========================================
      DOWNLOAD PDF
   ======================================== */
 
@@ -2365,7 +2340,7 @@ const separateFundReport =
 
 
     doc.text(
-      `Reporting Period: ${monthLabel}`,
+      `Reporting Period: ${getReportPeriodLabel()}`,
       14,
       37
     );
@@ -2509,127 +2484,71 @@ const separateFundReport =
       }
     );
 
-{/* ==================================
-    SEPARATE FUNDS SUMMARY
-================================== */}
+    /* ======================================
+       SEPARATE FUNDS SUMMARY
+    ====================================== */
 
-{separateFundReport.length > 0 && (
+    if (separateFundReport.length > 0) {
 
-  <section className="report-section separate-funds-report-section">
+      const separateStartY =
+        doc.lastAutoTable.finalY + 12;
 
-    <div className="report-section-heading">
+      doc.setFontSize(13);
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
 
-      <div>
+      doc.text(
+        "Separate Funds",
+        14,
+        separateStartY
+      );
 
-        <p className="section-label">
-          SEPARATE FUNDS
-        </p>
+      autoTable(
+        doc,
+        {
+          startY: separateStartY + 5,
 
-        <h2>
-          Separately Managed Funds
-        </h2>
+          head: [
+            [
+              "Fund",
+              "Opening",
+              "Income",
+              "Expenses",
+              "Closing",
+            ],
+          ],
 
-        <p>
-          These funds are reported independently
-          and are not included in the Masjid's
-          financial totals.
-        </p>
+          body:
+            separateFundReport.map(
+              (fund) => [
+                fund.name,
+                formatCurrency(
+                  fund.opening
+                ),
+                formatCurrency(
+                  fund.income
+                ),
+                formatCurrency(
+                  fund.expenses
+                ),
+                formatCurrency(
+                  fund.closing
+                ),
+              ]
+            ),
 
-      </div>
+          theme: "grid",
 
-    </div>
+          styles: {
+            fontSize: 8,
+            cellPadding: 4,
+          },
+        }
+      );
+    }
 
-
-    <div className="fund-report-table-wrapper">
-
-      <table className="fund-report-table">
-
-        <thead>
-
-          <tr>
-
-            <th>
-              Fund
-            </th>
-
-            <th>
-              Opening
-            </th>
-
-            <th>
-              Income
-            </th>
-
-            <th>
-              Expenses
-            </th>
-
-            <th>
-              Closing
-            </th>
-
-          </tr>
-
-        </thead>
-
-
-        <tbody>
-
-          {separateFundReport.map(
-            (fund) => (
-
-              <tr key={fund.id}>
-
-                <td>
-                  <strong>
-                    {fund.name}
-                  </strong>
-                </td>
-
-                <td>
-                  {formatCurrency(
-                    fund.opening
-                  )}
-                </td>
-
-                <td className="report-table-income">
-                  +
-                  {" "}
-                  {formatCurrency(
-                    fund.income
-                  )}
-                </td>
-
-                <td className="report-table-expense">
-                  -
-                  {" "}
-                  {formatCurrency(
-                    fund.expenses
-                  )}
-                </td>
-
-                <td>
-                  <strong>
-                    {formatCurrency(
-                      fund.closing
-                    )}
-                  </strong>
-                </td>
-
-              </tr>
-
-            )
-          )}
-
-        </tbody>
-
-      </table>
-
-    </div>
-
-  </section>
-
-)}
     /* ======================================
        TRANSACTIONS
     ====================================== */
@@ -2784,15 +2703,15 @@ const separateFundReport =
        SAVE
     ====================================== */
 
-    const safeMonth =
-      selectedMonth.replace(
-        "-",
-        "_"
-      );
-
+    const safePeriod =
+      reportScope === "all"
+        ? "all_years"
+        : reportScope === "year"
+          ? `${selectedYear}_full_year`
+          : selectedMonth.replace("-", "_");
 
     doc.save(
-      `Mahal-Financial-Report-${safeMonth}.pdf`
+      `Mahal-Financial-Report-${safePeriod}.pdf`
     );
   }
 
@@ -2831,12 +2750,16 @@ const separateFundReport =
           </p>
 
           <h1>
-            Monthly Report
+            {reportScope === "all"
+              ? "All Years Report"
+              : reportScope === "year"
+                ? "Annual Report"
+                : "Monthly Report"}
           </h1>
 
           <p>
             Review income, expenses and fund
-            balances for a selected period.
+            balances for a selected month, year, or all recorded years.
           </p>
 
         </div>
@@ -2900,99 +2823,74 @@ const separateFundReport =
 <div className="report-period-bar">
 
   <div className="report-period-control">
-
-    <label>
-      Reporting Year
-    </label>
-
+    <label>Reporting Year</label>
     <select
       value={selectedYear}
       onChange={(event) => {
-
-        const year =
-          event.target.value;
-
-        setSelectedYear(
-          year
-        );
-
-        setSelectedMonth(
-          `${year}-${selectedMonth.split("-")[1]}`
-        );
-
+        const year = event.target.value;
+        setSelectedYear(year);
+        setSelectedMonth(`${year}-01`);
+        setReportScope("year");
         setTransactionFromDate("");
         setTransactionToDate("");
-
       }}
     >
-
-      {Array.from(
-        {
-          length: 10,
-        },
-        (_, index) => {
-
-          const year =
-            now.getFullYear() -
-            5 +
-            index;
-
-          return (
-            <option
-              key={year}
-              value={String(year)}
-            >
-              {year}
-            </option>
-          );
-
-        }
-      )}
-
+      {Array.from({ length: 10 }, (_, index) => {
+        const year = now.getFullYear() - 5 + index;
+        return <option key={year} value={String(year)}>{year}</option>;
+      })}
     </select>
-
   </div>
 
-
-  <div className="report-period-control">
-
-    <label>
-      Reporting Month
-    </label>
-
-    <input
-      type="month"
-      value={selectedMonth}
-      onChange={(event) => {
-
-        const value =
-          event.target.value;
-
-        setSelectedMonth(
-          value
-        );
-
-        setSelectedYear(
-          value.split("-")[0]
-        );
-
-        setTransactionFromDate("");
-        setTransactionToDate("");
-
-      }}
-    />
-
+  <div className="report-period-control report-period-month-control">
+    <label>Reporting Month</label>
+    <div className="report-period-month-input-row">
+      <input
+        type="month"
+        value={reportScope === "month" ? selectedMonth : ""}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value) {
+            setSelectedMonth(value);
+            setSelectedYear(value.split("-")[0]);
+            setReportScope("month");
+          }
+          setTransactionFromDate("");
+          setTransactionToDate("");
+        }}
+      />
+      <button
+        type="button"
+        className={reportScope === "year" ? "secondary-button report-period-active" : "secondary-button"}
+        onClick={() => {
+          setReportScope("year");
+          setSelectedMonth(`${selectedYear}-01`);
+          setTransactionFromDate("");
+          setTransactionToDate("");
+        }}
+      >
+        Full Year
+      </button>
+    </div>
   </div>
 
+  <button
+    type="button"
+    className={reportScope === "all" ? "primary-button report-all-years-active" : "secondary-button"}
+    onClick={() => {
+      setReportScope("all");
+      setTransactionFromDate("");
+      setTransactionToDate("");
+    }}
+  >
+    All Years
+  </button>
 
-  <strong>
-    {formatMonthLabel(
-      selectedMonth
-    )}
+  <strong className="report-period-label">
+    {getReportPeriodLabel()}
   </strong>
 
 </div>
-
 
       {/* ==================================
           ERROR
@@ -3083,6 +2981,7 @@ const separateFundReport =
     MONTHLY BALANCE REGISTER
 ================================== */}
 
+{reportScope !== "all" && (
 <section className="report-section monthly-balance-register-section">
 
   <div className="report-section-heading">
@@ -3223,6 +3122,42 @@ const separateFundReport =
   </div>
 
 </section>
+)}
+
+        {reportScope === "all" && (
+          <section className="report-section annual-balance-register-section">
+            <div className="report-section-heading">
+              <div>
+                <h2>Annual Balance Register</h2>
+                <p>Masjid opening, income, expenses and closing balances for every recorded year.</p>
+              </div>
+            </div>
+            <div className="fund-report-table-wrapper">
+              <table className="fund-report-table monthly-balance-register-table">
+                <thead>
+                  <tr>
+                    <th>Year</th>
+                    <th>Opening Balance</th>
+                    <th>Income</th>
+                    <th>Expenses</th>
+                    <th>Closing Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {annualBalanceRegister.map((row) => (
+                    <tr key={row.year}>
+                      <td><strong>{row.year}</strong></td>
+                      <td>{formatCurrency(row.opening)}</td>
+                      <td className="report-table-income">+ {formatCurrency(row.income)}</td>
+                      <td className="report-table-expense">- {formatCurrency(row.expenses)}</td>
+                      <td><strong>{formatCurrency(row.closing)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         {/* ==================================
             FUND-WISE SUMMARY
@@ -3239,12 +3174,7 @@ const separateFundReport =
               </h2>
 
               <p>
-                Performance of each active fund
-                during{" "}
-                {formatMonthLabel(
-                  selectedMonth
-                )}
-                .
+                Performance of each active fund during {getReportPeriodLabel()}.
               </p>
 
             </div>
@@ -3361,6 +3291,99 @@ const separateFundReport =
 
 
         {/* ==================================
+            SEPARATE FUNDS
+        ================================== */}
+
+        {separateFundReport.length > 0 && (
+
+          <section
+            className="report-section separate-funds-report-section"
+          >
+
+            <div className="report-section-heading">
+
+              <div>
+                <p className="section-label">
+                  SEPARATE FUNDS
+                </p>
+
+                <h2>
+                  Separately Managed Funds
+                </h2>
+
+                <p>
+                  These funds are accounted for independently
+                  and are not included in the Masjid totals.
+                </p>
+              </div>
+
+            </div>
+
+            <div className="fund-report-table-wrapper">
+
+              <table className="fund-report-table">
+
+                <thead>
+                  <tr>
+                    <th>Fund</th>
+                    <th>Opening</th>
+                    <th>Income</th>
+                    <th>Expenses</th>
+                    <th>Closing</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {separateFundReport.map(
+                    (fund) => (
+                      <tr key={fund.id}>
+                        <td>
+                          <strong>
+                            {fund.name}
+                          </strong>
+                        </td>
+
+                        <td>
+                          {formatCurrency(
+                            fund.opening
+                          )}
+                        </td>
+
+                        <td className="report-table-income">
+                          +{" "}
+                          {formatCurrency(
+                            fund.income
+                          )}
+                        </td>
+
+                        <td className="report-table-expense">
+                          -{" "}
+                          {formatCurrency(
+                            fund.expenses
+                          )}
+                        </td>
+
+                        <td>
+                          <strong>
+                            {formatCurrency(
+                              fund.closing
+                            )}
+                          </strong>
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ==================================
             TRANSACTIONS
         ================================== */}
 
@@ -3378,11 +3401,7 @@ const separateFundReport =
                 {
                   filteredTransactions.length
                 }{" "}
-                shown of{" "}
-                {
-                  monthlyTransactions.length
-                }{" "}
-                recorded transactions.
+                transactions shown.
               </p>
 
             </div>
@@ -3443,12 +3462,6 @@ const separateFundReport =
                 value={
                   transactionFromDate
                 }
-                min={
-                  period.start
-                }
-                max={
-                  period.end
-                }
                 onChange={(event) =>
                   setTransactionFromDate(
                     event.target.value
@@ -3471,12 +3484,6 @@ const separateFundReport =
                 type="date"
                 value={
                   transactionToDate
-                }
-                min={
-                  period.start
-                }
-                max={
-                  period.end
                 }
                 onChange={(event) =>
                   setTransactionToDate(
@@ -3512,6 +3519,11 @@ const separateFundReport =
             </button>
 
           </div>
+
+          <p className="report-filter-help">
+            Leave dates blank to show the selected month.
+            Enter From/To dates to browse any period.
+          </p>
 
 
           {/* TRANSACTION TABLE */}
@@ -3797,10 +3809,9 @@ const separateFundReport =
 
 
       <p className="transaction-import-intro">
-        Bring older donation and expense records
-        into the financial system from a CSV file.
-        Existing records are checked for duplicates
-        before importing.
+        Bring older income and expense records into the financial system from a UTF-8 CSV or Excel (.xlsx/.xls) file.
+        Income categories must already exist under their fund. Expenses use free-text purpose.
+        Existing records are checked for duplicates before importing.
       </p>
 
 
@@ -3835,6 +3846,22 @@ const separateFundReport =
       </div>
 
 
+      <div className="transaction-import-rules">
+
+        <strong>Import rules</strong>
+
+        <ul>
+          <li>Dates: DD/MM/YYYY or YYYY-MM-DD.</li>
+          <li>Excel (.xlsx/.xls) is recommended for Malayalam text.</li>
+          <li>Income categories must already exist under the selected fund.</li>
+          <li>Expenses use Category as free-text expense purpose.</li>
+          <li>Fund names must match the Funds page.</li>
+          <li>The full file is validated before any transaction is inserted.</li>
+        </ul>
+
+      </div>
+
+
       {/* UPLOAD */}
 
       <label
@@ -3848,13 +3875,13 @@ const separateFundReport =
 
 
         <strong>
-          Choose CSV File
+          Choose CSV / Excel File
         </strong>
 
 
         <small>
-          Donations and expenses can be mixed
-          in the same file.
+          Donations and expenses can be mixed in the same file.
+          Excel is recommended for Malayalam text.
         </small>
 
       </label>
@@ -3863,7 +3890,7 @@ const separateFundReport =
       <input
         id="historical-transaction-file"
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
         hidden
         onChange={
           prepareImportFile
@@ -3934,7 +3961,7 @@ const separateFundReport =
                   </th>
 
                   <th>
-                    Category
+                    Category / Expense Purpose
                   </th>
 
                   <th>

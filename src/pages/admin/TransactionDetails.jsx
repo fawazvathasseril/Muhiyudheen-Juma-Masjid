@@ -41,8 +41,8 @@ function TransactionDetails() {
 
 
   const [
-    expenseCategories,
-    setExpenseCategories,
+    expenseSuggestions,
+    setExpenseSuggestions,
   ] = useState([]);
 
 
@@ -93,6 +93,7 @@ function TransactionDetails() {
     amount: "",
     fundId: "",
     category: "",
+    expensePurpose: "",
     description: "",
     transactionDate: "",
     referenceNumber: "",
@@ -120,7 +121,7 @@ function TransactionDetails() {
     const [
       transactionResult,
       fundsResult,
-      categoriesResult,
+      expenseSuggestionsResult,
     ] =
       await Promise.all([
 
@@ -168,20 +169,17 @@ function TransactionDetails() {
           ),
 
 
-        /* EXPENSE CATEGORIES */
+        /* PREVIOUSLY USED EXPENSE DESCRIPTIONS */
 
         supabase
-          .from(
-            "expense_categories"
-          )
-          .select(`
-            id,
-            name,
-            is_active
-          `)
-          .order(
-            "name"
-          ),
+          .from("transactions")
+          .select("category")
+          .eq("type", "expense")
+          .not("category", "is", null)
+          .order("created_at", {
+            ascending: false,
+          })
+          .limit(100),
       ]);
 
 
@@ -214,11 +212,11 @@ function TransactionDetails() {
 
 
     if (
-      categoriesResult.error
+      expenseSuggestionsResult.error
     ) {
 
       setError(
-        categoriesResult.error.message
+        expenseSuggestionsResult.error.message
       );
 
       setLoading(false);
@@ -241,8 +239,43 @@ function TransactionDetails() {
     );
 
 
-    setExpenseCategories(
-      categoriesResult.data || []
+    const defaultExpenseSuggestions = [
+      "Plumbing",
+      "Electricity",
+      "Stationery",
+      "Newspaper",
+      "Usthad Salaries",
+      "Nails / Hammer",
+      "Tiles / Granite / Adhesive",
+      "Tiles Labour",
+      "Coconut Labour",
+      "Solar Panel",
+      "General Pallipani",
+    ];
+
+
+    const historicalExpenseSuggestions =
+      (expenseSuggestionsResult.data || [])
+        .map(
+          (item) =>
+            String(
+              item.category || ""
+            ).trim()
+        )
+        .filter(Boolean);
+
+
+    const uniqueSuggestions =
+      Array.from(
+        new Set([
+          ...defaultExpenseSuggestions,
+          ...historicalExpenseSuggestions,
+        ])
+      );
+
+
+    setExpenseSuggestions(
+      uniqueSuggestions
     );
 
 
@@ -254,7 +287,14 @@ function TransactionDetails() {
         data.funds?.id || "",
 
       category:
-        data.category || "",
+        data.type === "income"
+          ? data.category || ""
+          : "",
+
+      expensePurpose:
+        data.type === "expense"
+          ? data.category || ""
+          : "",
 
       description:
         data.description || "",
@@ -432,7 +472,29 @@ function TransactionDetails() {
     }
 
 
+    const expensePurpose =
+      form.expensePurpose.trim();
+
+
     if (
+      transaction.type === "expense" &&
+      !expensePurpose
+    ) {
+
+      setError(
+        "Please enter what this expense was for."
+      );
+
+      setSaving(
+        false
+      );
+
+      return;
+    }
+
+
+    if (
+      transaction.type === "income" &&
       !form.category.trim()
     ) {
 
@@ -466,7 +528,9 @@ function TransactionDetails() {
               form.fundId,
 
             category:
-              form.category.trim(),
+              transaction.type === "expense"
+                ? expensePurpose
+                : form.category.trim(),
 
             description:
               form.description.trim() ||
@@ -480,8 +544,15 @@ function TransactionDetails() {
               null,
 
             party_name:
-              form.partyName.trim() ||
-              null,
+              transaction.type === "income"
+                ? (
+                    form.partyName.trim() ||
+                    null
+                  )
+                : (
+                    transaction.party_name ||
+                    null
+                  ),
 
             payment_method:
               form.paymentMethod,
@@ -622,8 +693,20 @@ function TransactionDetails() {
           "",
 
         category:
-          transaction.category ||
-          "",
+          transaction.type === "income"
+            ? (
+                transaction.category ||
+                ""
+              )
+            : "",
+
+        expensePurpose:
+          transaction.type === "expense"
+            ? (
+                transaction.category ||
+                ""
+              )
+            : "",
 
         description:
           transaction.description ||
@@ -1036,62 +1119,63 @@ function TransactionDetails() {
               </div>
 
 
-              {/* CATEGORY */}
+              {/* CATEGORY / EXPENSE PURPOSE */}
 
-              <div className="form-field">
-
-                <label>
-                  Category
-                </label>
-
-
-                {transaction.type ===
+              {transaction.type ===
                 "expense" ? (
 
-                  <select
-                    name="category"
+                <div className="form-field">
+
+                  <label>
+                    What was this expense for?
+                  </label>
+
+                  <input
+                    type="text"
+                    name="expensePurpose"
                     value={
-                      form.category
+                      form.expensePurpose
                     }
                     onChange={
                       handleChange
                     }
+                    list="expense-purpose-suggestions"
+                    placeholder="e.g. Electricity bill, plumbing work, tiles..."
+                    autoComplete="off"
                     required
+                  />
+
+                  <datalist
+                    id="expense-purpose-suggestions"
                   >
-
-                    <option value="">
-                      Select category
-                    </option>
-
-                    {expenseCategories
-                      .filter(
-                        (category) =>
-                          category.is_active ||
-                          category.name ===
-                            form.category
+                    {expenseSuggestions.map(
+                      (suggestion) => (
+                        <option
+                          key={
+                            suggestion
+                          }
+                          value={
+                            suggestion
+                          }
+                        />
                       )
-                      .map(
-                        (category) => (
+                    )}
+                  </datalist>
 
-                          <option
-                            key={
-                              category.id
-                            }
-                            value={
-                              category.name
-                            }
-                          >
-                            {
-                              category.name
-                            }
-                          </option>
+                  <small className="file-help">
+                    Type your own expense or choose a
+                    previously used suggestion.
+                  </small>
 
-                        )
-                      )}
+                </div>
 
-                  </select>
+              ) : (
 
-                ) : (
+                <div className="form-field">
+
+                  <label>
+                    Category
+                  </label>
 
                   <input
                     type="text"
@@ -1105,9 +1189,8 @@ function TransactionDetails() {
                     required
                   />
 
-                )}
-
-              </div>
+                </div>
+              )}
 
 
               {/* DATE */}
@@ -1133,30 +1216,31 @@ function TransactionDetails() {
               </div>
 
 
-              {/* PARTY */}
+              {/* PARTY / DONOR */}
 
-              <div className="form-field">
+              {transaction.type ===
+                "income" && (
 
-                <label>
-                  {transaction.type ===
-                  "income"
-                    ? "Donor / Reference"
-                    : "Payee / Vendor"}
-                </label>
+                <div className="form-field">
 
-                <input
-                  type="text"
-                  name="partyName"
-                  value={
-                    form.partyName
-                  }
-                  onChange={
-                    handleChange
-                  }
-                  placeholder="Optional"
-                />
+                  <label>
+                    Donor / Reference
+                  </label>
 
-              </div>
+                  <input
+                    type="text"
+                    name="partyName"
+                    value={
+                      form.partyName
+                    }
+                    onChange={
+                      handleChange
+                    }
+                    placeholder="Optional"
+                  />
+
+                </div>
+              )}
 
 
               {/* PAYMENT METHOD */}
@@ -1388,23 +1472,44 @@ function TransactionDetails() {
 
           <div className="transaction-detail-grid">
 
-            <div>
+            {transaction.type ===
+              "income" && (
 
-              <span>
-                {transaction.type ===
-                "income"
-                  ? "Donor / Reference"
-                  : "Payee / Vendor"}
-              </span>
+              <div>
 
-              <strong>
-                {
-                  transaction.party_name ||
-                  "Not provided"
-                }
-              </strong>
+                <span>
+                  Donor / Reference
+                </span>
 
-            </div>
+                <strong>
+                  {
+                    transaction.party_name ||
+                    "Not provided"
+                  }
+                </strong>
+
+              </div>
+            )}
+
+
+            {transaction.type ===
+              "expense" &&
+              transaction.party_name && (
+
+              <div>
+
+                <span>
+                  Payee / Vendor
+                </span>
+
+                <strong>
+                  {
+                    transaction.party_name
+                  }
+                </strong>
+
+              </div>
+            )}
 
 
             <div>
@@ -1441,12 +1546,16 @@ function TransactionDetails() {
             <div>
 
               <span>
-                Category
+                {transaction.type ===
+                "expense"
+                  ? "What was this expense for?"
+                  : "Category"}
               </span>
 
               <strong>
                 {
-                  transaction.category
+                  transaction.category ||
+                  "Not provided"
                 }
               </strong>
 

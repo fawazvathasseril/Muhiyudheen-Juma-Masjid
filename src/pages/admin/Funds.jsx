@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 
+
 function Funds() {
   const { member, loading: authLoading } = useAuth();
 
@@ -15,27 +16,17 @@ function Funds() {
   const [activeTab, setActiveTab] = useState("funds");
 
   const [loading, setLoading] = useState(true);
-
   const [error, setError] = useState("");
-
   const [success, setSuccess] = useState("");
 
   /* ========================================
-     FUNDS
+     DATA
   ======================================== */
 
   const [funds, setFunds] = useState([]);
-
   const [transactions, setTransactions] = useState([]);
-
   const [websiteCollections, setWebsiteCollections] = useState([]);
-
   const [fundTransfers, setFundTransfers] = useState([]);
-
-  /* ========================================
-     CATEGORIES
-  ======================================== */
-
   const [categories, setCategories] = useState([]);
 
   /* ========================================
@@ -43,15 +34,12 @@ function Funds() {
   ======================================== */
 
   const [showFundModal, setShowFundModal] = useState(false);
-
   const [editingFund, setEditingFund] = useState(null);
-
   const [savingFund, setSavingFund] = useState(false);
 
   const [fundForm, setFundForm] = useState({
     name: "",
     description: "",
-    categoryId: "",
     fundType: "masjid",
     includeInMasjidTotals: true,
     startDate: "",
@@ -64,12 +52,11 @@ function Funds() {
   ======================================== */
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-
   const [editingCategory, setEditingCategory] = useState(null);
-
   const [savingCategory, setSavingCategory] = useState(false);
 
   const [categoryForm, setCategoryForm] = useState({
+    fundId: "",
     name: "",
     description: "",
     isActive: true,
@@ -80,8 +67,8 @@ function Funds() {
   ======================================== */
 
   const [showTransferModal, setShowTransferModal] = useState(false);
-
   const [savingTransfer, setSavingTransfer] = useState(false);
+  const [editingTransfer, setEditingTransfer] = useState(null);
 
   const [transferForm, setTransferForm] = useState({
     fromFundId: "",
@@ -92,33 +79,8 @@ function Funds() {
     referenceNumber: "",
   });
 
-  const [editingTransfer, setEditingTransfer] = useState(null);
-
-  function openEditTransfer(transfer) {
-    setEditingTransfer(transfer);
-
-    setTransferForm({
-      fromFundId: transfer.from_fund_id,
-
-      toFundId: transfer.to_fund_id,
-
-      amount: transfer.amount,
-
-      transferDate: transfer.transfer_date,
-
-      reason: transfer.reason || "",
-
-      referenceNumber: transfer.reference_number || "",
-    });
-
-    setError("");
-    setSuccess("");
-
-    setShowTransferModal(true);
-  }
-
   /* ========================================
-     LOAD ALL
+     LOAD
   ======================================== */
 
   async function loadFunds() {
@@ -134,66 +96,57 @@ function Funds() {
     ] = await Promise.all([
       supabase
         .from("funds")
-        .select(
-          `
-  id,
-  name,
-  description,
-  is_active,
-  category_id,
-  fund_type,
-  include_in_masjid_totals,
-  start_date,
-  end_date,
-  status
-`,
-        )
+        .select(`
+          id,
+          name,
+          description,
+          is_active,
+          fund_type,
+          include_in_masjid_totals,
+          start_date,
+          end_date,
+          status
+        `)
         .order("name"),
 
       supabase
         .from("transactions")
-        .select(
-          `
+        .select(`
           id,
           fund_id,
           type,
           amount,
           transaction_date
-        `,
-        )
+        `)
         .order("transaction_date", {
           ascending: false,
         }),
 
       supabase
         .from("donation_requests")
-        .select(
-          `
+        .select(`
           id,
           fund_id,
           amount,
           status
-        `,
-        )
+        `)
         .eq("status", "confirmed"),
 
       supabase
         .from("fund_categories")
-        .select(
-          `
+        .select(`
           id,
           name,
           description,
           is_active,
+          fund_id,
           created_at
-        `,
-        )
+        `)
         .order("name"),
 
       supabase
         .from("fund_transfers")
-        .select(
-          `
+        .select(`
           id,
           from_fund_id,
           to_fund_id,
@@ -202,8 +155,7 @@ function Funds() {
           reason,
           reference_number,
           created_at
-        `,
-        )
+        `)
         .order("transfer_date", {
           ascending: false,
         })
@@ -220,23 +172,25 @@ function Funds() {
       transfersResult,
     ];
 
-    const failed = results.find((result) => result.error);
+    const failed = results.find(
+      (result) => result.error
+    );
 
     if (failed) {
       setError(failed.error.message);
-
       setLoading(false);
       return;
     }
 
-    setFunds(fundsResult.data || []);
+    const loadedFunds = fundsResult.data || [];
+    const loadedCategories = categoriesResult.data || [];
 
+    setFunds(loadedFunds);
     setTransactions(transactionsResult.data || []);
-
-    setWebsiteCollections(websiteCollectionsResult.data || []);
-
-    setCategories(categoriesResult.data || []);
-
+    setWebsiteCollections(
+      websiteCollectionsResult.data || []
+    );
+    setCategories(loadedCategories);
     setFundTransfers(transfersResult.data || []);
 
     setLoading(false);
@@ -248,42 +202,6 @@ function Funds() {
     }
   }, [authLoading]);
 
-  async function deleteTransfer(transfer) {
-    if (!isAdmin) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete this ₹${Number(transfer.amount).toLocaleString(
-        "en-IN",
-      )} transfer from "${getFundName(
-        transfer.from_fund_id,
-      )}" to "${getFundName(
-        transfer.to_fund_id,
-      )}"? This will reverse the transfer's effect on both fund balances.`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setError("");
-    setSuccess("");
-
-    const { error } = await supabase
-      .from("fund_transfers")
-      .delete()
-      .eq("id", transfer.id);
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    await loadFunds();
-
-    setSuccess("Fund transfer deleted successfully.");
-  }
   /* ========================================
      HELPERS
   ======================================== */
@@ -301,22 +219,28 @@ function Funds() {
       return "—";
     }
 
-    return new Date(value).toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  }
-
-  function getCategoryName(categoryId) {
-    return (
-      categories.find((category) => category.id === categoryId)?.name ||
-      "Uncategorized"
+    return new Date(value).toLocaleDateString(
+      "en-IN",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }
     );
   }
 
   function getFundName(fundId) {
-    return funds.find((fund) => fund.id === fundId)?.name || "Unknown Fund";
+    return (
+      funds.find(
+        (fund) => fund.id === fundId
+      )?.name || "Unknown Fund"
+    );
+  }
+
+  function getFundTypeLabel(fund) {
+    return fund.include_in_masjid_totals === false
+      ? "SEPARATE"
+      : "MASJID";
   }
 
   /* ========================================
@@ -325,94 +249,158 @@ function Funds() {
 
   const fundData = useMemo(() => {
     return funds.map((fund) => {
-      const fundTransactions = transactions.filter(
-        (transaction) => transaction.fund_id === fund.id,
-      );
-
-      const income = fundTransactions
-        .filter((transaction) => transaction.type === "income")
-        .reduce(
-          (total, transaction) => total + Number(transaction.amount || 0),
-          0,
+      const fundTransactions =
+        transactions.filter(
+          (transaction) =>
+            transaction.fund_id === fund.id
         );
 
-      const expenses = fundTransactions
-        .filter((transaction) => transaction.type === "expense")
-        .reduce(
-          (total, transaction) => total + Number(transaction.amount || 0),
-          0,
-        );
+      const income =
+        fundTransactions
+          .filter(
+            (transaction) =>
+              transaction.type === "income"
+          )
+          .reduce(
+            (total, transaction) =>
+              total +
+              Number(
+                transaction.amount || 0
+              ),
+            0
+          );
 
-      const incomingTransfers = fundTransfers
-        .filter((transfer) => transfer.to_fund_id === fund.id)
-        .reduce((total, transfer) => total + Number(transfer.amount || 0), 0);
+      const expenses =
+        fundTransactions
+          .filter(
+            (transaction) =>
+              transaction.type === "expense"
+          )
+          .reduce(
+            (total, transaction) =>
+              total +
+              Number(
+                transaction.amount || 0
+              ),
+            0
+          );
 
-      const outgoingTransfers = fundTransfers
-        .filter((transfer) => transfer.from_fund_id === fund.id)
-        .reduce((total, transfer) => total + Number(transfer.amount || 0), 0);
+      const incomingTransfers =
+        fundTransfers
+          .filter(
+            (transfer) =>
+              transfer.to_fund_id === fund.id
+          )
+          .reduce(
+            (total, transfer) =>
+              total +
+              Number(
+                transfer.amount || 0
+              ),
+            0
+          );
 
-      const websiteCollection = websiteCollections
-        .filter((request) => request.fund_id === fund.id)
-        .reduce((total, request) => total + Number(request.amount || 0), 0);
+      const outgoingTransfers =
+        fundTransfers
+          .filter(
+            (transfer) =>
+              transfer.from_fund_id === fund.id
+          )
+          .reduce(
+            (total, transfer) =>
+              total +
+              Number(
+                transfer.amount || 0
+              ),
+            0
+          );
 
-      const balance = income - expenses + incomingTransfers - outgoingTransfers;
+      const websiteCollection =
+        websiteCollections
+          .filter(
+            (request) =>
+              request.fund_id === fund.id
+          )
+          .reduce(
+            (total, request) =>
+              total +
+              Number(
+                request.amount || 0
+              ),
+            0
+          );
+
+      const balance =
+        income -
+        expenses +
+        incomingTransfers -
+        outgoingTransfers;
 
       return {
         ...fund,
-
         income,
-
         expenses,
-
         incomingTransfers,
-
         outgoingTransfers,
-
         websiteCollection,
-
         balance,
-
-        transactionCount: fundTransactions.length,
+        transactionCount:
+          fundTransactions.length,
       };
     });
-  }, [funds, transactions, websiteCollections, fundTransfers]);
+  }, [
+    funds,
+    transactions,
+    websiteCollections,
+    fundTransfers,
+  ]);
 
-  /* ========================================
-     TOTALS
-  ======================================== */
+  const masjidFundData =
+    fundData.filter(
+      (fund) =>
+        fund.include_in_masjid_totals !== false
+    );
 
-  const masjidFundData = fundData.filter(
-    (fund) => fund.include_in_masjid_totals !== false,
-  );
+  const separateFundData =
+    fundData.filter(
+      (fund) =>
+        fund.include_in_masjid_totals === false
+    );
 
-  const separateFundData = fundData.filter(
-    (fund) => fund.include_in_masjid_totals === false,
-  );
+  const totalIncome =
+    masjidFundData.reduce(
+      (total, fund) =>
+        total + fund.income,
+      0
+    );
 
-  const totalIncome = masjidFundData.reduce(
-    (total, fund) => total + fund.income,
-    0,
-  );
+  const totalExpenses =
+    masjidFundData.reduce(
+      (total, fund) =>
+        total + fund.expenses,
+      0
+    );
 
-  const totalExpenses = masjidFundData.reduce(
-    (total, fund) => total + fund.expenses,
-    0,
-  );
+  const totalIncomingTransfers =
+    masjidFundData.reduce(
+      (total, fund) =>
+        total + fund.incomingTransfers,
+      0
+    );
 
-  const totalIncomingTransfers = masjidFundData.reduce(
-    (total, fund) => total + fund.incomingTransfers,
-    0,
-  );
+  const totalOutgoingTransfers =
+    masjidFundData.reduce(
+      (total, fund) =>
+        total + fund.outgoingTransfers,
+      0
+    );
 
-  const totalOutgoingTransfers = masjidFundData.reduce(
-    (total, fund) => total + fund.outgoingTransfers,
-    0,
-  );
-
-  const totalWebsiteCollection = masjidFundData.reduce(
-    (total, fund) => total + fund.websiteCollection,
-    0,
-  );
+  const totalWebsiteCollection =
+    masjidFundData.reduce(
+      (total, fund) =>
+        total + fund.websiteCollection,
+      0
+    );
 
   const totalBalance =
     totalIncome -
@@ -420,10 +408,16 @@ function Funds() {
     totalIncomingTransfers -
     totalOutgoingTransfers;
 
-  const activeFunds = funds.filter(
-    (fund) =>
-      (fund.status || (fund.is_active ? "active" : "closed")) === "active",
-  );
+  const activeFunds =
+    fundData.filter(
+      (fund) =>
+        (
+          fund.status ||
+          (fund.is_active
+            ? "active"
+            : "closed")
+        ) === "active"
+    );
 
   /* ========================================
      FUND MODAL
@@ -435,7 +429,6 @@ function Funds() {
     setFundForm({
       name: "",
       description: "",
-      categoryId: categories.find((category) => category.is_active)?.id || "",
       fundType: "masjid",
       includeInMasjidTotals: true,
       startDate: "",
@@ -445,7 +438,6 @@ function Funds() {
 
     setError("");
     setSuccess("");
-
     setShowFundModal(true);
   }
 
@@ -454,25 +446,21 @@ function Funds() {
 
     setFundForm({
       name: fund.name || "",
-
       description: fund.description || "",
-
-      categoryId: fund.category_id || "",
-
       fundType: fund.fund_type || "masjid",
-
-      includeInMasjidTotals: fund.include_in_masjid_totals !== false,
-
+      includeInMasjidTotals:
+        fund.include_in_masjid_totals !== false,
       startDate: fund.start_date || "",
-
       endDate: fund.end_date || "",
-
-      status: fund.status || (fund.is_active ? "active" : "closed"),
+      status:
+        fund.status ||
+        (fund.is_active
+          ? "active"
+          : "closed"),
     });
 
     setError("");
     setSuccess("");
-
     setShowFundModal(true);
   }
 
@@ -485,71 +473,95 @@ function Funds() {
 
     if (!fundForm.name.trim()) {
       setError("Fund name is required.");
-
       return;
     }
 
     if (
       fundForm.endDate &&
       fundForm.startDate &&
-      fundForm.endDate < fundForm.startDate
+      fundForm.endDate <
+        fundForm.startDate
     ) {
-      setError("End date cannot be earlier than the start date.");
-
+      setError(
+        "End date cannot be earlier than the start date."
+      );
       return;
     }
 
     setSavingFund(true);
-
     setError("");
     setSuccess("");
 
     try {
       const payload = {
-        name: fundForm.name.trim(),
+        name:
+          fundForm.name.trim(),
 
-        description: fundForm.description.trim() || null,
+        description:
+          fundForm.description.trim() ||
+          null,
 
-        category_id: fundForm.categoryId || null,
+        fund_type:
+          fundForm.fundType,
 
-        fund_type: fundForm.fundType,
+        include_in_masjid_totals:
+          fundForm.includeInMasjidTotals,
 
-        include_in_masjid_totals: fundForm.includeInMasjidTotals,
+        start_date:
+          fundForm.startDate ||
+          null,
 
-        start_date: fundForm.startDate || null,
+        end_date:
+          fundForm.endDate ||
+          null,
 
-        end_date: fundForm.endDate || null,
+        status:
+          fundForm.status,
 
-        status: fundForm.status,
-
-        is_active: fundForm.status === "active" || fundForm.status === "draft",
+        is_active:
+          fundForm.status === "active" ||
+          fundForm.status === "draft",
       };
 
       if (editingFund) {
-        const { error: updateError } = await supabase
+        const {
+          error: updateError,
+        } = await supabase
           .from("funds")
           .update(payload)
-          .eq("id", editingFund.id);
+          .eq(
+            "id",
+            editingFund.id
+          );
 
         if (updateError) {
-          throw new Error(updateError.message);
+          throw new Error(
+            updateError.message
+          );
         }
 
-        setSuccess("Fund updated successfully.");
+        setSuccess(
+          "Fund updated successfully."
+        );
       } else {
-        const { error: insertError } = await supabase
+        const {
+          error: insertError,
+        } = await supabase
           .from("funds")
           .insert(payload);
 
         if (insertError) {
-          throw new Error(insertError.message);
+          throw new Error(
+            insertError.message
+          );
         }
 
-        setSuccess("Fund created successfully.");
+        setSuccess(
+          "Fund created successfully."
+        );
       }
 
       setShowFundModal(false);
-
       await loadFunds();
     } catch (err) {
       setError(err.message);
@@ -563,9 +575,10 @@ function Funds() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Permanently delete "${fund.name}"? This can only be done if the fund has no financial records or transfers.`,
-    );
+    const confirmed =
+      window.confirm(
+        `Permanently delete "${fund.name}"? This can only be done if the fund has no financial records or transfers.`
+      );
 
     if (!confirmed) {
       return;
@@ -575,104 +588,160 @@ function Funds() {
     setSuccess("");
 
     try {
-      // Check accounting transactions
-      const { count: transactionCount, error: transactionCheckError } =
-        await supabase
-          .from("transactions")
-          .select("id", {
-            count: "exact",
-            head: true,
-          })
-          .eq("fund_id", fund.id);
-
-      if (transactionCheckError) {
-        throw new Error(transactionCheckError.message);
-      }
-
-      // Check transfers FROM this fund
-      const { count: outgoingCount, error: outgoingCheckError } = await supabase
-        .from("fund_transfers")
+      const {
+        count: transactionCount,
+        error: transactionCheckError,
+      } = await supabase
+        .from("transactions")
         .select("id", {
           count: "exact",
           head: true,
         })
-        .eq("from_fund_id", fund.id);
-
-      if (outgoingCheckError) {
-        throw new Error(outgoingCheckError.message);
-      }
-
-      // Check transfers TO this fund
-      const { count: incomingCount, error: incomingCheckError } = await supabase
-        .from("fund_transfers")
-        .select("id", {
-          count: "exact",
-          head: true,
-        })
-        .eq("to_fund_id", fund.id);
-
-      if (incomingCheckError) {
-        throw new Error(incomingCheckError.message);
-      }
-
-      const transactionTotal = transactionCount || 0;
-
-      const transferTotal = (outgoingCount || 0) + (incomingCount || 0);
-
-      if (transactionTotal > 0 || transferTotal > 0) {
-        setError(
-          `"${fund.name}" cannot be deleted because it has ${transactionTotal} transaction${transactionTotal === 1 ? "" : "s"} and ${transferTotal} transfer${transferTotal === 1 ? "" : "s"}. Close the fund instead to preserve its financial history.`,
+        .eq(
+          "fund_id",
+          fund.id
         );
 
+      if (transactionCheckError) {
+        throw new Error(
+          transactionCheckError.message
+        );
+      }
+
+      const {
+        count: outgoingCount,
+        error: outgoingCheckError,
+      } = await supabase
+        .from("fund_transfers")
+        .select("id", {
+          count: "exact",
+          head: true,
+        })
+        .eq(
+          "from_fund_id",
+          fund.id
+        );
+
+      if (outgoingCheckError) {
+        throw new Error(
+          outgoingCheckError.message
+        );
+      }
+
+      const {
+        count: incomingCount,
+        error: incomingCheckError,
+      } = await supabase
+        .from("fund_transfers")
+        .select("id", {
+          count: "exact",
+          head: true,
+        })
+        .eq(
+          "to_fund_id",
+          fund.id
+        );
+
+      if (incomingCheckError) {
+        throw new Error(
+          incomingCheckError.message
+        );
+      }
+
+      const transactionTotal =
+        transactionCount || 0;
+
+      const transferTotal =
+        (outgoingCount || 0) +
+        (incomingCount || 0);
+
+      if (
+        transactionTotal > 0 ||
+        transferTotal > 0
+      ) {
+        setError(
+          `"${fund.name}" cannot be deleted because it has ${transactionTotal} transaction${transactionTotal === 1 ? "" : "s"} and ${transferTotal} transfer${transferTotal === 1 ? "" : "s"}. Close the fund instead to preserve its financial history.`
+        );
         return;
       }
 
-      // Check confirmed website contributions
-      const { count: websiteCount, error: websiteCheckError } = await supabase
+      const {
+        count: websiteCount,
+        error: websiteCheckError,
+      } = await supabase
         .from("donation_requests")
         .select("id", {
           count: "exact",
           head: true,
         })
-        .eq("fund_id", fund.id)
-        .eq("status", "confirmed");
+        .eq(
+          "fund_id",
+          fund.id
+        )
+        .eq(
+          "status",
+          "confirmed"
+        );
 
       if (websiteCheckError) {
-        throw new Error(websiteCheckError.message);
+        throw new Error(
+          websiteCheckError.message
+        );
       }
 
       if ((websiteCount || 0) > 0) {
         setError(
-          `"${fund.name}" cannot be deleted because it has confirmed website contributions. Close the fund instead.`,
+          `"${fund.name}" cannot be deleted because it has confirmed website contributions. Close the fund instead.`
         );
-
         return;
       }
 
-      const { error: deleteError } = await supabase
+      const {
+        error: deleteError,
+      } = await supabase
         .from("funds")
         .delete()
-        .eq("id", fund.id);
+        .eq(
+          "id",
+          fund.id
+        );
 
       if (deleteError) {
-        throw new Error(deleteError.message);
+        throw new Error(
+          deleteError.message
+        );
       }
 
       await loadFunds();
 
-      setSuccess(`"${fund.name}" was permanently deleted.`);
+      setSuccess(
+        `"${fund.name}" was permanently deleted.`
+      );
     } catch (err) {
       setError(err.message);
     }
   }
+
   /* ========================================
      CATEGORY MODAL
+     Categories belong to a FUND and are
+     primarily used as income/donation types.
   ======================================== */
 
   function openNewCategory() {
     setEditingCategory(null);
 
+    const firstMasjidFund =
+      activeFunds.find(
+        (fund) =>
+          fund.include_in_masjid_totals !== false
+      );
+
     setCategoryForm({
+      fundId:
+        firstMasjidFund?.id ||
+        activeFunds[0]?.id ||
+        "",
       name: "",
       description: "",
       isActive: true,
@@ -680,7 +749,6 @@ function Funds() {
 
     setError("");
     setSuccess("");
-
     setShowCategoryModal(true);
   }
 
@@ -688,16 +756,18 @@ function Funds() {
     setEditingCategory(category);
 
     setCategoryForm({
-      name: category.name || "",
-
-      description: category.description || "",
-
-      isActive: category.is_active,
+      fundId:
+        category.fund_id || "",
+      name:
+        category.name || "",
+      description:
+        category.description || "",
+      isActive:
+        category.is_active,
     });
 
     setError("");
     setSuccess("");
-
     setShowCategoryModal(true);
   }
 
@@ -708,51 +778,79 @@ function Funds() {
       return;
     }
 
-    if (!categoryForm.name.trim()) {
-      setError("Category name is required.");
+    if (!categoryForm.fundId) {
+      setError(
+        "Please select the fund this category belongs to."
+      );
+      return;
+    }
 
+    if (!categoryForm.name.trim()) {
+      setError(
+        "Category name is required."
+      );
       return;
     }
 
     setSavingCategory(true);
-
     setError("");
     setSuccess("");
 
     try {
       const payload = {
-        name: categoryForm.name.trim(),
+        fund_id:
+          categoryForm.fundId,
 
-        description: categoryForm.description.trim() || null,
+        name:
+          categoryForm.name.trim(),
 
-        is_active: categoryForm.isActive,
+        description:
+          categoryForm.description.trim() ||
+          null,
+
+        is_active:
+          categoryForm.isActive,
       };
 
       if (editingCategory) {
-        const { error: updateError } = await supabase
+        const {
+          error: updateError,
+        } = await supabase
           .from("fund_categories")
           .update(payload)
-          .eq("id", editingCategory.id);
+          .eq(
+            "id",
+            editingCategory.id
+          );
 
         if (updateError) {
-          throw new Error(updateError.message);
+          throw new Error(
+            updateError.message
+          );
         }
 
-        setSuccess("Category updated successfully.");
+        setSuccess(
+          "Fund category updated successfully."
+        );
       } else {
-        const { error: insertError } = await supabase
+        const {
+          error: insertError,
+        } = await supabase
           .from("fund_categories")
           .insert(payload);
 
         if (insertError) {
-          throw new Error(insertError.message);
+          throw new Error(
+            insertError.message
+          );
         }
 
-        setSuccess("Category created successfully.");
+        setSuccess(
+          "Fund category created successfully."
+        );
       }
 
       setShowCategoryModal(false);
-
       await loadFunds();
     } catch (err) {
       setError(err.message);
@@ -766,21 +864,51 @@ function Funds() {
       return;
     }
 
-    const fundsUsingCategory = funds.filter(
-      (fund) => fund.category_id === category.id,
-    );
-
-    if (fundsUsingCategory.length > 0) {
-      setError(
-        `"${category.name}" cannot be deleted because ${fundsUsingCategory.length} fund${fundsUsingCategory.length === 1 ? " is" : "s are"} using this category. Reassign those funds first, or deactivate the category.`,
+    /*
+     * Preserve historical transaction text.
+     * If this income category has already been
+     * used, deactivate it instead of deleting it.
+     */
+    const {
+      count: usageCount,
+      error: usageError,
+    } = await supabase
+      .from("transactions")
+      .select("id", {
+        count: "exact",
+        head: true,
+      })
+      .eq(
+        "type",
+        "income"
+      )
+      .eq(
+        "category",
+        category.name
+      )
+      .eq(
+        "fund_id",
+        category.fund_id
       );
 
+    if (usageError) {
+      setError(
+        usageError.message
+      );
       return;
     }
 
-    const confirmed = window.confirm(
-      `Permanently delete the "${category.name}" category? This cannot be undone.`,
-    );
+    if ((usageCount || 0) > 0) {
+      setError(
+        `"${category.name}" has ${usageCount} historical income transaction${usageCount === 1 ? "" : "s"}. Deactivate it instead of deleting it so the historical record remains intact.`
+      );
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        `Permanently delete "${category.name}"? This cannot be undone.`
+      );
 
     if (!confirmed) {
       return;
@@ -789,37 +917,53 @@ function Funds() {
     setError("");
     setSuccess("");
 
-    const { error } = await supabase
+    const {
+      error: deleteError,
+    } = await supabase
       .from("fund_categories")
       .delete()
-      .eq("id", category.id);
+      .eq(
+        "id",
+        category.id
+      );
 
-    if (error) {
-      setError(error.message);
-
+    if (deleteError) {
+      setError(
+        deleteError.message
+      );
       return;
     }
 
     await loadFunds();
 
-    setSuccess(`"${category.name}" was permanently deleted.`);
+    setSuccess(
+      `"${category.name}" was permanently deleted.`
+    );
   }
 
   /* ========================================
-     TRANSFER MODAL
+     TRANSFERS
   ======================================== */
 
   function openTransferModal() {
     setEditingTransfer(null);
 
     setTransferForm({
-      fromFundId: activeFunds[0]?.id || "",
+      fromFundId:
+        activeFunds[0]?.id ||
+        "",
 
-      toFundId: activeFunds[1]?.id || activeFunds[0]?.id || "",
+      toFundId:
+        activeFunds[1]?.id ||
+        activeFunds[0]?.id ||
+        "",
 
       amount: "",
 
-      transferDate: new Date().toISOString().split("T")[0],
+      transferDate:
+        new Date()
+          .toISOString()
+          .split("T")[0],
 
       reason: "",
 
@@ -828,13 +972,97 @@ function Funds() {
 
     setError("");
     setSuccess("");
-
     setShowTransferModal(true);
   }
 
-  const selectedSourceFund = fundData.find(
-    (fund) => fund.id === transferForm.fromFundId,
-  );
+  function openEditTransfer(transfer) {
+    setEditingTransfer(
+      transfer
+    );
+
+    setTransferForm({
+      fromFundId:
+        transfer.from_fund_id,
+
+      toFundId:
+        transfer.to_fund_id,
+
+      amount:
+        transfer.amount,
+
+      transferDate:
+        transfer.transfer_date,
+
+      reason:
+        transfer.reason || "",
+
+      referenceNumber:
+        transfer.reference_number ||
+        "",
+    });
+
+    setError("");
+    setSuccess("");
+    setShowTransferModal(true);
+  }
+
+  async function deleteTransfer(
+    transfer
+  ) {
+    if (!isAdmin) {
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        `Delete this ₹${Number(
+          transfer.amount
+        ).toLocaleString(
+          "en-IN"
+        )} transfer from "${getFundName(
+          transfer.from_fund_id
+        )}" to "${getFundName(
+          transfer.to_fund_id
+        )}"? This will reverse the transfer's effect on both fund balances.`
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+
+    const {
+      error: deleteError,
+    } = await supabase
+      .from("fund_transfers")
+      .delete()
+      .eq(
+        "id",
+        transfer.id
+      );
+
+    if (deleteError) {
+      setError(
+        deleteError.message
+      );
+      return;
+    }
+
+    await loadFunds();
+
+    setSuccess(
+      "Fund transfer deleted successfully."
+    );
+  }
+
+  const selectedSourceFund =
+    fundData.find(
+      (fund) =>
+        fund.id ===
+        transferForm.fromFundId
+    );
 
   async function saveTransfer(event) {
     event.preventDefault();
@@ -843,112 +1071,163 @@ function Funds() {
       return;
     }
 
-    const amount = Number(transferForm.amount);
+    const amount =
+      Number(
+        transferForm.amount
+      );
 
     if (!transferForm.fromFundId) {
-      setError("Please select the source fund.");
-
+      setError(
+        "Please select the source fund."
+      );
       return;
     }
 
     if (!transferForm.toFundId) {
-      setError("Please select the destination fund.");
-
+      setError(
+        "Please select the destination fund."
+      );
       return;
     }
 
-    if (transferForm.fromFundId === transferForm.toFundId) {
-      setError("Source and destination funds must be different.");
-
+    if (
+      transferForm.fromFundId ===
+      transferForm.toFundId
+    ) {
+      setError(
+        "Source and destination funds must be different."
+      );
       return;
     }
 
     if (!amount || amount <= 0) {
-      setError("Please enter a valid transfer amount.");
-
+      setError(
+        "Please enter a valid transfer amount."
+      );
       return;
     }
 
-    if (amount > Number(selectedSourceFund?.balance || 0)) {
+    if (
+      amount >
+      Number(
+        selectedSourceFund?.balance || 0
+      )
+    ) {
       setError(
-        `Insufficient available balance in ${selectedSourceFund?.name || "the source fund"}.`,
+        `Insufficient available balance in ${
+          selectedSourceFund?.name ||
+          "the source fund"
+        }.`
       );
-
       return;
     }
 
     setSavingTransfer(true);
-
     setError("");
     setSuccess("");
 
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: authData,
+      } =
+        await supabase.auth.getUser();
 
-      if (!user) {
-        throw new Error("You must be signed in.");
+      const currentUser =
+        authData?.user;
+
+      if (!currentUser) {
+        throw new Error(
+          "You must be signed in."
+        );
       }
 
       let transferError = null;
 
       if (editingTransfer) {
-        const { error } = await supabase
+        const {
+          error,
+        } = await supabase
           .from("fund_transfers")
           .update({
-            from_fund_id: transferForm.fromFundId,
+            from_fund_id:
+              transferForm.fromFundId,
 
-            to_fund_id: transferForm.toFundId,
+            to_fund_id:
+              transferForm.toFundId,
 
             amount,
 
-            transfer_date: transferForm.transferDate,
+            transfer_date:
+              transferForm.transferDate,
 
-            reason: transferForm.reason.trim() || null,
+            reason:
+              transferForm.reason.trim() ||
+              null,
 
-            reference_number: transferForm.referenceNumber.trim() || null,
+            reference_number:
+              transferForm.referenceNumber.trim() ||
+              null,
           })
-          .eq("id", editingTransfer.id);
+          .eq(
+            "id",
+            editingTransfer.id
+          );
 
-        transferError = error;
+        transferError =
+          error;
       } else {
-        const { error } = await supabase.from("fund_transfers").insert({
-          from_fund_id: transferForm.fromFundId,
+        const {
+          error,
+        } = await supabase
+          .from("fund_transfers")
+          .insert({
+            from_fund_id:
+              transferForm.fromFundId,
 
-          to_fund_id: transferForm.toFundId,
+            to_fund_id:
+              transferForm.toFundId,
 
-          amount,
+            amount,
 
-          transfer_date: transferForm.transferDate,
+            transfer_date:
+              transferForm.transferDate,
 
-          reason: transferForm.reason.trim() || null,
+            reason:
+              transferForm.reason.trim() ||
+              null,
 
-          reference_number: transferForm.referenceNumber.trim() || null,
+            reference_number:
+              transferForm.referenceNumber.trim() ||
+              null,
 
-          created_by: user.id,
-        });
+            created_by:
+              currentUser.id,
+          });
 
-        transferError = error;
+        transferError =
+          error;
       }
 
       if (transferError) {
-        throw new Error(transferError.message);
+        throw new Error(
+          transferError.message
+        );
       }
 
       setShowTransferModal(false);
-
       setEditingTransfer(null);
 
       setSuccess(
         editingTransfer
           ? "Fund transfer updated successfully."
-          : "Fund transfer recorded successfully.",
+          : "Fund transfer recorded successfully."
       );
 
       await loadFunds();
     } catch (err) {
-      setError(err.message);
+      setError(
+        err.message
+      );
     } finally {
       setSavingTransfer(false);
     }
@@ -958,21 +1237,36 @@ function Funds() {
      LOADING
   ======================================== */
 
-  if (authLoading || loading) {
-    return <div className="admin-loading">Loading funds...</div>;
+  if (
+    authLoading ||
+    loading
+  ) {
+    return (
+      <div className="admin-loading">
+        Loading funds...
+      </div>
+    );
   }
 
   /* ========================================
      ACCESS
   ======================================== */
 
-  if (!member || !member.is_active || !isAdmin) {
+  if (
+    !member ||
+    !member.is_active ||
+    !isAdmin
+  ) {
     return (
       <div className="admin-access-denied">
         <div>
-          <h1>Access denied</h1>
+          <h1>
+            Access denied
+          </h1>
 
-          <p>Only administrators can manage funds.</p>
+          <p>
+            Only administrators can manage funds.
+          </p>
         </div>
       </div>
     );
@@ -984,53 +1278,104 @@ function Funds() {
 
   return (
     <div className="fund-management-page">
+
       {/* HEADER */}
 
       <div className="admin-page-heading">
+
         <div>
-          <p className="section-label">FINANCIAL MANAGEMENT</p>
 
-          <h1>Funds</h1>
+          <p className="section-label">
+            FINANCIAL MANAGEMENT
+          </p>
 
-          <p>Manage funds, categories, balances and internal transfers.</p>
+          <h1>
+            Funds
+          </h1>
+
+          <p>
+            Manage funds, income types,
+            balances and internal transfers.
+          </p>
+
         </div>
 
-        <button type="button" className="secondary-button" onClick={loadFunds}>
+
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={loadFunds}
+        >
           ↻ Refresh
         </button>
+
       </div>
 
-      {error && <div className="form-message error">{error}</div>}
 
-      {success && <div className="form-message success">{success}</div>}
+      {error && (
+        <div className="form-message error">
+          {error}
+        </div>
+      )}
+
+
+      {success && (
+        <div className="form-message success">
+          {success}
+        </div>
+      )}
+
 
       {/* TABS */}
 
       <div className="fund-management-tabs">
+
         <button
           type="button"
-          className={activeTab === "funds" ? "active" : ""}
-          onClick={() => setActiveTab("funds")}
+          className={
+            activeTab === "funds"
+              ? "active"
+              : ""
+          }
+          onClick={() =>
+            setActiveTab("funds")
+          }
         >
           Funds
         </button>
 
+
         <button
           type="button"
-          className={activeTab === "categories" ? "active" : ""}
-          onClick={() => setActiveTab("categories")}
+          className={
+            activeTab === "categories"
+              ? "active"
+              : ""
+          }
+          onClick={() =>
+            setActiveTab("categories")
+          }
         >
           Categories
         </button>
 
+
         <button
           type="button"
-          className={activeTab === "transfers" ? "active" : ""}
-          onClick={() => setActiveTab("transfers")}
+          className={
+            activeTab === "transfers"
+              ? "active"
+              : ""
+          }
+          onClick={() =>
+            setActiveTab("transfers")
+          }
         >
           Transfers
         </button>
+
       </div>
+
 
       {/* ========================================
           FUNDS TAB
@@ -1038,873 +1383,1613 @@ function Funds() {
 
       {activeTab === "funds" && (
         <>
-          <div className="fund-toolbar">
-            <div>
-              <span>{activeFunds.length}</span>
 
-              <small>active funds</small>
+          <div className="fund-toolbar">
+
+            <div>
+              <span>
+                {activeFunds.length}
+              </span>
+
+              <small>
+                active funds
+              </small>
             </div>
+
 
             <button
               type="button"
               className="primary-button"
-              onClick={openNewFund}
+              onClick={
+                openNewFund
+              }
             >
               + New Fund
             </button>
+
           </div>
+
 
           {/* SUMMARY */}
 
           <div className="fund-summary-cards">
-            <div className="fund-summary-card">
-              <span>TOTAL BALANCE</span>
 
-              <strong>{formatCurrency(totalBalance)}</strong>
+            <div className="fund-summary-card">
+              <span>
+                TOTAL BALANCE
+              </span>
+
+              <strong>
+                {formatCurrency(
+                  totalBalance
+                )}
+              </strong>
             </div>
 
+
             <div className="fund-summary-card">
-              <span>TOTAL INCOME</span>
+              <span>
+                TOTAL INCOME
+              </span>
 
               <strong className="fund-income">
-                {formatCurrency(totalIncome)}
+                {formatCurrency(
+                  totalIncome
+                )}
               </strong>
             </div>
 
+
             <div className="fund-summary-card">
-              <span>TOTAL EXPENSES</span>
+              <span>
+                TOTAL EXPENSES
+              </span>
 
               <strong className="fund-expense">
-                {formatCurrency(totalExpenses)}
+                {formatCurrency(
+                  totalExpenses
+                )}
               </strong>
             </div>
+
 
             <div className="fund-summary-card">
-              <span>WEBSITE COLLECTIONS</span>
+              <span>
+                WEBSITE COLLECTIONS
+              </span>
 
               <strong className="fund-website-total">
-                {formatCurrency(totalWebsiteCollection)}
+                {formatCurrency(
+                  totalWebsiteCollection
+                )}
               </strong>
             </div>
+
           </div>
 
-          {/* FUND CARDS */}
+
+          {/* MASJID FUND CARDS */}
 
           <div className="fund-management-grid">
-            {masjidFundData
-              .filter((fund) => fund.status !== "closed")
-              .map((fund) => (
-                <article className="fund-management-card" key={fund.id}>
-                  <div className="fund-card-top">
-                    <div>
-                      <div className="fund-badge-row">
-                        <span className="fund-active-badge">
-                          {(
-                            fund.status ||
-                            (fund.is_active ? "active" : "closed")
-                          ).toUpperCase()}
-                        </span>
 
-                        <span className="fund-category-badge">
-                          {getCategoryName(fund.category_id)}
-                        </span>
+            {masjidFundData
+              .filter(
+                (fund) =>
+                  fund.status !==
+                  "closed"
+              )
+              .map(
+                (fund) => (
+
+                  <article
+                    className="fund-management-card"
+                    key={fund.id}
+                  >
+
+                    <div className="fund-card-top">
+
+                      <div>
+
+                        <div className="fund-badge-row">
+
+                          <span className="fund-active-badge">
+                            {(
+                              fund.status ||
+                              (
+                                fund.is_active
+                                  ? "active"
+                                  : "closed"
+                              )
+                            ).toUpperCase()}
+                          </span>
+
+                          <span className="fund-category-badge">
+                            MASJID FUND
+                          </span>
+
+                        </div>
+
+
+                        <h2>
+                          {fund.name}
+                        </h2>
+
                       </div>
 
-                      <h2>{fund.name}</h2>
+
+                      <span className="fund-symbol">
+                        ₹
+                      </span>
+
                     </div>
 
-                    <span className="fund-symbol">₹</span>
-                  </div>
 
-                  <p className="fund-description">
-                    {fund.description || "No description provided."}
+                    <p className="fund-description">
+                      {fund.description ||
+                        "No description provided."}
+                    </p>
+
+
+                    <div className="fund-period">
+
+                      <span>
+                        FUND PERIOD
+                      </span>
+
+                      <strong>
+
+                        {fund.start_date
+                          ? formatDate(
+                              fund.start_date
+                            )
+                          : "No start date"}
+
+                        {" → "}
+
+                        {fund.end_date
+                          ? formatDate(
+                              fund.end_date
+                            )
+                          : "Ongoing"}
+
+                      </strong>
+
+                    </div>
+
+
+                    <div className="fund-balance">
+
+                      <span>
+                        CURRENT BALANCE
+                      </span>
+
+                      <strong>
+                        {formatCurrency(
+                          fund.balance
+                        )}
+                      </strong>
+
+                    </div>
+
+
+                    <div className="fund-details">
+
+                      <div>
+                        <span>
+                          Income
+                        </span>
+
+                        <strong className="fund-income">
+                          {formatCurrency(
+                            fund.income
+                          )}
+                        </strong>
+                      </div>
+
+
+                      <div>
+                        <span>
+                          Expenses
+                        </span>
+
+                        <strong className="fund-expense">
+                          {formatCurrency(
+                            fund.expenses
+                          )}
+                        </strong>
+                      </div>
+
+
+                      <div>
+                        <span>
+                          Transfers In
+                        </span>
+
+                        <strong>
+                          {formatCurrency(
+                            fund.incomingTransfers
+                          )}
+                        </strong>
+                      </div>
+
+
+                      <div>
+                        <span>
+                          Transfers Out
+                        </span>
+
+                        <strong>
+                          {formatCurrency(
+                            fund.outgoingTransfers
+                          )}
+                        </strong>
+                      </div>
+
+                    </div>
+
+
+                    <div className="fund-website-collection">
+
+                      <div>
+
+                        <span>
+                          WEBSITE COLLECTION
+                        </span>
+
+                        <p>
+                          Confirmed website contribution requests.
+                        </p>
+
+                      </div>
+
+                      <strong>
+                        {formatCurrency(
+                          fund.websiteCollection
+                        )}
+                      </strong>
+
+                    </div>
+
+
+                    <div className="fund-card-footer">
+
+                      <span>
+                        {fund.transactionCount} accounting transactions
+                      </span>
+
+
+                      <div className="fund-card-actions">
+
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() =>
+                            openEditFund(
+                              fund
+                            )
+                          }
+                        >
+                          Edit
+                        </button>
+
+
+                        <button
+                          type="button"
+                          className="member-action danger"
+                          onClick={() =>
+                            deleteFund(
+                              fund
+                            )
+                          }
+                        >
+                          Delete
+                        </button>
+
+                      </div>
+
+                    </div>
+
+                  </article>
+
+                )
+              )}
+
+          </div>
+
+
+          {/* ==================================
+              SEPARATE FUNDS
+          ================================== */}
+
+          {separateFundData.length >
+            0 && (
+
+            <section className="separate-funds-section">
+
+              <div className="fund-section-header">
+
+                <div>
+
+                  <p className="section-label">
+                    SEPARATE FUNDS
                   </p>
 
-                  <div className="fund-period">
-                    <span>FUND PERIOD</span>
-
-                    <strong>
-                      {fund.start_date
-                        ? formatDate(fund.start_date)
-                        : "No start date"}
-                      {" → "}
-                      {fund.end_date ? formatDate(fund.end_date) : "Ongoing"}
-                    </strong>
-                  </div>
-
-                  <div className="fund-balance">
-                    <span>CURRENT BALANCE</span>
-
-                    <strong>{formatCurrency(fund.balance)}</strong>
-                  </div>
-
-                  <div className="fund-details">
-                    <div>
-                      <span>Income</span>
-
-                      <strong className="fund-income">
-                        {formatCurrency(fund.income)}
-                      </strong>
-                    </div>
-
-                    <div>
-                      <span>Expenses</span>
-
-                      <strong className="fund-expense">
-                        {formatCurrency(fund.expenses)}
-                      </strong>
-                    </div>
-
-                    <div>
-                      <span>Transfers In</span>
-
-                      <strong>{formatCurrency(fund.incomingTransfers)}</strong>
-                    </div>
-
-                    <div>
-                      <span>Transfers Out</span>
-
-                      <strong>{formatCurrency(fund.outgoingTransfers)}</strong>
-                    </div>
-                  </div>
-
-                  <div className="fund-website-collection">
-                    <div>
-                      <span>WEBSITE COLLECTION</span>
-
-                      <p>Confirmed website contribution requests.</p>
-                    </div>
-
-                    <strong>{formatCurrency(fund.websiteCollection)}</strong>
-                  </div>
-
-                  <div className="fund-card-footer">
-                    <span>{fund.transactionCount} accounting transactions</span>
-
-                    <div className="fund-card-actions">
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => openEditFund(fund)}
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        type="button"
-                        className="member-action danger"
-                        onClick={() => deleteFund(fund)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-          </div>
-
-          {/* ========================================
-    SEPARATE FUNDS
-======================================== */}
-
-{separateFundData.length > 0 && (
-
-  <section className="separate-funds-section">
-
-    <div className="fund-section-header">
-
-      <div>
-
-        <p className="section-label">
-          SEPARATE FUNDS
-        </p>
-
-        <h2>
-          Funds Managed Separately
-        </h2>
-
-        <p>
-          These funds are recorded independently
-          and are not included in the Masjid's
-          financial totals.
-        </p>
-
-      </div>
-
-    </div>
-
-
-    <div className="fund-management-grid">
-
-      {separateFundData
-        .filter(
-          (fund) =>
-            fund.status !== "closed"
-        )
-        .map(
-          (fund) => (
-
-            <article
-              className="fund-management-card separate-fund-card"
-              key={fund.id}
-            >
-
-              <div className="fund-card-top">
-
-                <div>
-
-                  <div className="fund-badge-row">
-
-                    <span className="fund-active-badge">
-                      SEPARATE
-                    </span>
-
-                    <span className="fund-category-badge">
-                      {getCategoryName(
-                        fund.category_id
-                      )}
-                    </span>
-
-                  </div>
-
-
                   <h2>
-                    {fund.name}
+                    Funds Managed Separately
                   </h2>
 
+                  <p>
+                    These funds are recorded independently
+                    and are not included in the Masjid's
+                    financial totals.
+                  </p>
+
                 </div>
-
-
-                <span className="fund-symbol">
-                  ₹
-                </span>
 
               </div>
 
 
-              <p className="fund-description">
-                {fund.description ||
-                  "Managed separately from Masjid funds."}
-              </p>
+              <div className="fund-management-grid">
+
+                {separateFundData
+                  .filter(
+                    (fund) =>
+                      fund.status !==
+                      "closed"
+                  )
+                  .map(
+                    (fund) => (
+
+                      <article
+                        className="fund-management-card separate-fund-card"
+                        key={fund.id}
+                      >
+
+                        <div className="fund-card-top">
+
+                          <div>
+
+                            <div className="fund-badge-row">
+
+                              <span className="fund-active-badge">
+                                SEPARATE
+                              </span>
+
+                              <span className="fund-category-badge">
+                                SEPARATE FUND
+                              </span>
+
+                            </div>
 
 
-              <div className="fund-balance">
+                            <h2>
+                              {fund.name}
+                            </h2>
 
-                <span>
-                  CURRENT BALANCE
-                </span>
+                          </div>
 
-                <strong>
-                  {formatCurrency(
-                    fund.balance
+
+                          <span className="fund-symbol">
+                            ₹
+                          </span>
+
+                        </div>
+
+
+                        <p className="fund-description">
+                          {fund.description ||
+                            "Managed separately from Masjid funds."}
+                        </p>
+
+
+                        <div className="fund-balance">
+
+                          <span>
+                            CURRENT BALANCE
+                          </span>
+
+                          <strong>
+                            {formatCurrency(
+                              fund.balance
+                            )}
+                          </strong>
+
+                        </div>
+
+
+                        <div className="fund-details">
+
+                          <div>
+                            <span>
+                              Income
+                            </span>
+
+                            <strong className="fund-income">
+                              {formatCurrency(
+                                fund.income
+                              )}
+                            </strong>
+                          </div>
+
+
+                          <div>
+                            <span>
+                              Expenses
+                            </span>
+
+                            <strong className="fund-expense">
+                              {formatCurrency(
+                                fund.expenses
+                              )}
+                            </strong>
+                          </div>
+
+
+                          <div>
+                            <span>
+                              Transactions
+                            </span>
+
+                            <strong>
+                              {fund.transactionCount}
+                            </strong>
+                          </div>
+
+                        </div>
+
+
+                        <div className="fund-card-footer">
+
+                          <span>
+                            Not included in Masjid totals
+                          </span>
+
+
+                          <div className="fund-card-actions">
+
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() =>
+                                openEditFund(
+                                  fund
+                                )
+                              }
+                            >
+                              Edit
+                            </button>
+
+
+                            <button
+                              type="button"
+                              className="member-action danger"
+                              onClick={() =>
+                                deleteFund(
+                                  fund
+                                )
+                              }
+                            >
+                              Delete
+                            </button>
+
+                          </div>
+
+                        </div>
+
+                      </article>
+
+                    )
                   )}
-                </strong>
 
               </div>
 
+            </section>
 
-              <div className="fund-details">
+          )}
 
-                <div>
-
-                  <span>
-                    Income
-                  </span>
-
-                  <strong className="fund-income">
-                    {formatCurrency(
-                      fund.income
-                    )}
-                  </strong>
-
-                </div>
-
-
-                <div>
-
-                  <span>
-                    Expenses
-                  </span>
-
-                  <strong className="fund-expense">
-                    {formatCurrency(
-                      fund.expenses
-                    )}
-                  </strong>
-
-                </div>
-
-
-                <div>
-
-                  <span>
-                    Transactions
-                  </span>
-
-                  <strong>
-                    {fund.transactionCount}
-                  </strong>
-
-                </div>
-
-              </div>
-
-
-              <div className="fund-card-footer">
-
-                <span>
-                  Not included in Masjid totals
-                </span>
-
-                <div className="fund-card-actions">
-
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() =>
-                      openEditFund(fund)
-                    }
-                  >
-                    Edit
-                  </button>
-
-
-                  <button
-                    type="button"
-                    className="member-action danger"
-                    onClick={() =>
-                      deleteFund(fund)
-                    }
-                  >
-                    Delete
-                  </button>
-
-                </div>
-
-              </div>
-
-            </article>
-
-          )
-        )}
-
-    </div>
-
-  </section>
-
-)}
-
-          {/* ACCOUNTING NOTE */}
 
           <div className="fund-accounting-note">
-            <span>✓</span>
+
+            <span>
+              ✓
+            </span>
 
             <div>
-              <strong>Balance is calculated automatically</strong>
+
+              <strong>
+                Balance is calculated automatically
+              </strong>
 
               <p>
-                Income and expenses come from accounting transactions. Fund
-                transfers move existing money between funds and do not create
-                new income or expenses.
+                Income and expenses come from accounting transactions.
+                Fund transfers move existing money between funds and do not
+                create new income or expenses.
               </p>
+
             </div>
+
           </div>
+
         </>
       )}
+
 
       {/* ========================================
           CATEGORIES TAB
       ======================================== */}
 
       {activeTab === "categories" && (
-        <div className="fund-category-management">
-          <div className="fund-section-header">
-            <div>
-              <p className="section-label">FUND STRUCTURE</p>
 
-              <h2>Fund Categories</h2>
+        <div className="fund-category-management">
+
+          <div className="fund-section-header">
+
+            <div>
+
+              <p className="section-label">
+                FUND TYPES
+              </p>
+
+              <h2>
+                Income Categories
+              </h2>
 
               <p>
-                Categories classify different types of funds. A category can
-                contain many separate funds.
+                Add the income or donation types that
+                belong to a specific fund. These categories
+                will appear automatically when recording
+                income for that fund.
               </p>
+
             </div>
+
 
             <button
               type="button"
               className="primary-button"
-              onClick={openNewCategory}
+              onClick={
+                openNewCategory
+              }
             >
               + Add Category
             </button>
+
           </div>
+
 
           <div className="fund-category-grid">
-            {categories.map((category) => {
-              const categoryFunds = funds.filter(
-                (fund) => fund.category_id === category.id,
-              );
 
-              return (
-                <article
-                  className={
-                    category.is_active
-                      ? "fund-category-card"
-                      : "fund-category-card inactive"
-                  }
-                  key={category.id}
-                >
-                  <div className="fund-category-card-top">
-                    <div className="fund-category-icon">◇</div>
+            {funds.map(
+              (fund) => {
 
-                    <span
-                      className={
-                        category.is_active
-                          ? "category-status active"
-                          : "category-status inactive"
-                      }
+                const fundCategories =
+                  categories.filter(
+                    (category) =>
+                      category.fund_id ===
+                      fund.id
+                  );
+
+                return (
+
+                  <article
+                    className="fund-category-card"
+                    key={fund.id}
+                  >
+
+                    <div className="fund-category-card-top">
+
+                      <div className="fund-category-icon">
+                        ₹
+                      </div>
+
+
+                      <span
+                        className={
+                          fund.include_in_masjid_totals !== false
+                            ? "category-status active"
+                            : "category-status inactive"
+                        }
+                      >
+                        {getFundTypeLabel(
+                          fund
+                        )}
+                      </span>
+
+                    </div>
+
+
+                    <h3>
+                      {fund.name}
+                    </h3>
+
+
+                    <p>
+                      Income types available
+                      for this fund.
+                    </p>
+
+
+                    <div
+                      className="fund-category-meta"
+                      style={{
+                        display:
+                          "flex",
+                        flexDirection:
+                          "column",
+                        alignItems:
+                          "flex-start",
+                        gap:
+                          "8px",
+                      }}
                     >
-                      {category.is_active ? "ACTIVE" : "INACTIVE"}
-                    </span>
-                  </div>
 
-                  <h3>{category.name}</h3>
+                      <strong>
+                        {
+                          fundCategories.length
+                        }
+                      </strong>
 
-                  <p>{category.description || "No description provided."}</p>
+                      <span>
+                        category
+                        {
+                          fundCategories.length !==
+                          1
+                            ? "ies"
+                            : "y"
+                        }
+                      </span>
 
-                  <div className="fund-category-meta">
-                    <strong>{categoryFunds.length}</strong>
+                    </div>
 
-                    <span>
-                      fund
-                      {categoryFunds.length !== 1 ? "s" : ""}
-                    </span>
-                  </div>
 
-                  <div className="fund-category-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => openEditCategory(category)}
+                    <div
+                      style={{
+                        display:
+                          "flex",
+                        flexDirection:
+                          "column",
+                        gap:
+                          "8px",
+                        marginTop:
+                          "16px",
+                      }}
                     >
-                      Edit
-                    </button>
 
-                    <button
-                      type="button"
-                      className="member-action danger"
-                      onClick={() => deleteCategory(category)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                      {fundCategories.length ===
+                      0 ? (
+
+                        <span
+                          style={{
+                            color:
+                              "#7a8a80",
+                            fontSize:
+                              "12px",
+                          }}
+                        >
+                          No income types added yet.
+                        </span>
+
+                      ) : (
+
+                        fundCategories.map(
+                          (category) => (
+
+                            <div
+                              key={
+                                category.id
+                              }
+                              style={{
+                                display:
+                                  "flex",
+                                alignItems:
+                                  "center",
+                                justifyContent:
+                                  "space-between",
+                                gap:
+                                  "10px",
+                                padding:
+                                  "10px 12px",
+                                border:
+                                  "1px solid #e1e9e4",
+                                borderRadius:
+                                  "8px",
+                                background:
+                                  category.is_active
+                                    ? "#ffffff"
+                                    : "#f5f7f5",
+                              }}
+                            >
+
+                              <div>
+
+                                <strong
+                                  style={{
+                                    display:
+                                      "block",
+                                    color:
+                                      "#2f4c3a",
+                                    fontSize:
+                                      "13px",
+                                  }}
+                                >
+                                  {
+                                    category.name
+                                  }
+                                </strong>
+
+
+                                <small
+                                  style={{
+                                    color:
+                                      "#77877d",
+                                  }}
+                                >
+                                  {
+                                    category.description ||
+                                    "No description"
+                                  }
+                                </small>
+
+                              </div>
+
+
+                              <div
+                                style={{
+                                  display:
+                                    "flex",
+                                  alignItems:
+                                    "center",
+                                  gap:
+                                    "8px",
+                                }}
+                              >
+
+                                <span
+                                  className={
+                                    category.is_active
+                                      ? "category-status active"
+                                      : "category-status inactive"
+                                  }
+                                >
+                                  {category.is_active
+                                    ? "ACTIVE"
+                                    : "INACTIVE"}
+                                </span>
+
+
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() =>
+                                    openEditCategory(
+                                      category
+                                    )
+                                  }
+                                >
+                                  Edit
+                                </button>
+
+
+                                <button
+                                  type="button"
+                                  className="member-action danger"
+                                  onClick={() =>
+                                    deleteCategory(
+                                      category
+                                    )
+                                  }
+                                >
+                                  Delete
+                                </button>
+
+                              </div>
+
+                            </div>
+
+                          )
+                        )
+
+                      )}
+
+                    </div>
+
+                  </article>
+
+                );
+
+              }
+            )}
+
           </div>
+
         </div>
+
       )}
+
 
       {/* ========================================
           TRANSFERS TAB
       ======================================== */}
 
       {activeTab === "transfers" && (
-        <div className="fund-transfer-management">
-          <div className="fund-section-header">
-            <div>
-              <p className="section-label">INTERNAL MOVEMENT</p>
 
-              <h2>Fund Transfers</h2>
+        <div className="fund-transfer-management">
+
+          <div className="fund-section-header">
+
+            <div>
+
+              <p className="section-label">
+                INTERNAL MOVEMENT
+              </p>
+
+              <h2>
+                Fund Transfers
+              </h2>
 
               <p>
-                Move available money from one fund to another without recording
-                it as new income or an expense.
+                Move available money from one fund
+                to another without recording it as
+                new income or an expense.
               </p>
+
             </div>
+
 
             <button
               type="button"
               className="primary-button"
-              onClick={openTransferModal}
+              onClick={
+                openTransferModal
+              }
             >
               + New Transfer
             </button>
+
           </div>
+
 
           <div className="fund-transfer-balance-note">
-            <span>↔</span>
+
+            <span>
+              ↔
+            </span>
 
             <div>
-              <strong>Transfers preserve the accounting trail</strong>
+
+              <strong>
+                Transfers preserve the accounting trail
+              </strong>
 
               <p>
-                A transfer reduces the source fund and increases the destination
-                fund. It does not change the overall combined balance.
+                A transfer reduces the source fund
+                and increases the destination fund.
+                It does not change the overall
+                combined balance.
               </p>
+
             </div>
+
           </div>
 
-          {fundTransfers.length === 0 ? (
+
+          {fundTransfers.length ===
+          0 ? (
+
             <div className="admin-empty-card">
-              <h3>No transfers yet</h3>
 
-              <p>Internal fund movements will appear here.</p>
+              <h3>
+                No transfers yet
+              </h3>
+
+              <p>
+                Internal fund movements will appear here.
+              </p>
+
             </div>
+
           ) : (
+
             <div className="fund-transfer-table-wrap">
+
               <table className="fund-transfer-table">
+
                 <thead>
+
                   <tr>
-                    <th>Date</th>
 
-                    <th>From</th>
+                    <th>
+                      Date
+                    </th>
 
-                    <th>To</th>
+                    <th>
+                      From
+                    </th>
 
-                    <th>Reason</th>
+                    <th>
+                      To
+                    </th>
 
-                    <th>Reference</th>
+                    <th>
+                      Reason
+                    </th>
 
-                    <th className="amount-column">Amount</th>
+                    <th>
+                      Reference
+                    </th>
 
-                    <th>Actions</th>
+                    <th className="amount-column">
+                      Amount
+                    </th>
+
+                    <th>
+                      Actions
+                    </th>
+
                   </tr>
+
                 </thead>
 
+
                 <tbody>
-                  {fundTransfers.map((transfer) => (
-                    <tr key={transfer.id}>
-                      <td>{formatDate(transfer.transfer_date)}</td>
 
-                      <td>
-                        <strong>{getFundName(transfer.from_fund_id)}</strong>
-                      </td>
+                  {fundTransfers.map(
+                    (transfer) => (
 
-                      <td>
-                        <strong>{getFundName(transfer.to_fund_id)}</strong>
-                      </td>
+                      <tr
+                        key={
+                          transfer.id
+                        }
+                      >
 
-                      <td>{transfer.reason || "—"}</td>
+                        <td>
+                          {
+                            formatDate(
+                              transfer.transfer_date
+                            )
+                          }
+                        </td>
 
-                      <td>{transfer.reference_number || "—"}</td>
 
-                      <td className="amount-column">
-                        <strong>{formatCurrency(transfer.amount)}</strong>
-                      </td>
+                        <td>
+                          <strong>
+                            {
+                              getFundName(
+                                transfer.from_fund_id
+                              )
+                            }
+                          </strong>
+                        </td>
 
-                      <td>
-                        <div className="fund-transfer-actions">
-                          <button
-                            type="button"
-                            className="text-button"
-                            onClick={() => openEditTransfer(transfer)}
-                          >
-                            Edit
-                          </button>
 
-                          <button
-                            type="button"
-                            className="member-action danger"
-                            onClick={() => deleteTransfer(transfer)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        <td>
+                          <strong>
+                            {
+                              getFundName(
+                                transfer.to_fund_id
+                              )
+                            }
+                          </strong>
+                        </td>
+
+
+                        <td>
+                          {
+                            transfer.reason ||
+                            "—"
+                          }
+                        </td>
+
+
+                        <td>
+                          {
+                            transfer.reference_number ||
+                            "—"
+                          }
+                        </td>
+
+
+                        <td className="amount-column">
+                          <strong>
+                            {
+                              formatCurrency(
+                                transfer.amount
+                              )
+                            }
+                          </strong>
+                        </td>
+
+
+                        <td>
+
+                          <div className="fund-transfer-actions">
+
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() =>
+                                openEditTransfer(
+                                  transfer
+                                )
+                              }
+                            >
+                              Edit
+                            </button>
+
+
+                            <button
+                              type="button"
+                              className="member-action danger"
+                              onClick={() =>
+                                deleteTransfer(
+                                  transfer
+                                )
+                              }
+                            >
+                              Delete
+                            </button>
+
+                          </div>
+
+                        </td>
+
+                      </tr>
+
+                    )
+                  )}
+
                 </tbody>
+
               </table>
+
             </div>
+
           )}
+
         </div>
+
       )}
+
 
       {/* ========================================
           FUND MODAL
       ======================================== */}
 
       {showFundModal && (
+
         <div className="fund-modal-overlay">
+
           <div className="fund-modal">
+
             <button
               type="button"
               className="fund-modal-close"
-              onClick={() => setShowFundModal(false)}
-              disabled={savingFund}
+              onClick={() =>
+                setShowFundModal(false)
+              }
+              disabled={
+                savingFund
+              }
             >
               ×
             </button>
 
-            <p className="section-label">FUND MANAGEMENT</p>
 
-            <h2>{editingFund ? "Edit Fund" : "Create New Fund"}</h2>
-
-            <p className="fund-modal-intro">
-              A fund is a specific financial bucket. You can have multiple funds
-              under the same category.
+            <p className="section-label">
+              FUND MANAGEMENT
             </p>
 
-            <form onSubmit={saveFund}>
+
+            <h2>
+              {
+                editingFund
+                  ? "Edit Fund"
+                  : "Create New Fund"
+              }
+            </h2>
+
+
+            <p className="fund-modal-intro">
+              A fund is a specific financial
+              bucket with its own balance.
+            </p>
+
+
+            <form
+              onSubmit={
+                saveFund
+              }
+            >
+
               <div className="form-field">
-                <label>Fund Name</label>
+
+                <label>
+                  Fund Name
+                </label>
 
                 <input
                   type="text"
-                  value={fundForm.name}
-                  onChange={(event) =>
-                    setFundForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
+                  value={
+                    fundForm.name
                   }
-                  placeholder="e.g. Masjid Roof Reconstruction — 2026"
+                  onChange={(event) =>
+                    setFundForm(
+                      (current) => ({
+                        ...current,
+                        name:
+                          event.target.value,
+                      })
+                    )
+                  }
+                  placeholder="e.g. General Masjid Fund"
                   required
                 />
+
               </div>
 
-              <div className="fund-modal-grid">
-                <div className="form-field">
-                  <label>Category</label>
-
-                  <select
-                    value={fundForm.categoryId}
-                    onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
-                        categoryId: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">No category</option>
-
-                    {categories
-                      .filter((category) => category.is_active)
-                      .map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div className="form-field">
-                  <label>Status</label>
-
-                  <select
-                    value={fundForm.status}
-                    onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
-                        status: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="draft">Draft</option>
-
-                    <option value="active">Active</option>
-
-                    <option value="completed">Completed</option>
-
-                    <option value="closed">Closed</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* ==================================
-    FUND TYPE & ACCOUNTING
-================================== */}
 
               <div className="fund-modal-grid">
-                <div className="form-field">
-                  <label>Fund Type</label>
-
-                  <select
-                    value={fundForm.fundType}
-                    onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
-
-                        fundType: event.target.value,
-
-                        includeInMasjidTotals:
-                          event.target.value === "masjid"
-                            ? true
-                            : current.includeInMasjidTotals,
-                      }))
-                    }
-                  >
-                    <option value="masjid">Masjid Fund</option>
-
-                    <option value="separate">Separate Fund</option>
-                  </select>
-                </div>
 
                 <div className="form-field">
-                  <label>Accounting Treatment</label>
+
+                  <label>
+                    Fund Type
+                  </label>
 
                   <select
                     value={
-                      fundForm.includeInMasjidTotals ? "included" : "excluded"
+                      fundForm.fundType
                     }
                     onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
+                      setFundForm(
+                        (current) => ({
+                          ...current,
 
-                        includeInMasjidTotals:
-                          event.target.value === "included",
-                      }))
+                          fundType:
+                            event.target.value,
+
+                          includeInMasjidTotals:
+                            event.target.value ===
+                            "masjid"
+                              ? true
+                              : current.includeInMasjidTotals,
+                        })
+                      )
                     }
-                    disabled={fundForm.fundType === "masjid"}
                   >
-                    <option value="included">Include in Masjid totals</option>
+
+                    <option value="masjid">
+                      Masjid Fund
+                    </option>
+
+                    <option value="separate">
+                      Separate Fund
+                    </option>
+
+                  </select>
+
+                </div>
+
+
+                <div className="form-field">
+
+                  <label>
+                    Accounting Treatment
+                  </label>
+
+                  <select
+                    value={
+                      fundForm.includeInMasjidTotals
+                        ? "included"
+                        : "excluded"
+                    }
+                    onChange={(event) =>
+                      setFundForm(
+                        (current) => ({
+                          ...current,
+
+                          includeInMasjidTotals:
+                            event.target.value ===
+                            "included",
+                        })
+                      )
+                    }
+                    disabled={
+                      fundForm.fundType ===
+                      "masjid"
+                    }
+                  >
+
+                    <option value="included">
+                      Include in Masjid totals
+                    </option>
 
                     <option value="excluded">
                       Keep separate from Masjid totals
                     </option>
+
                   </select>
+
                 </div>
+
               </div>
+
 
               <div className="fund-modal-grid">
+
                 <div className="form-field">
-                  <label>Start Date</label>
+
+                  <label>
+                    Status
+                  </label>
+
+                  <select
+                    value={
+                      fundForm.status
+                    }
+                    onChange={(event) =>
+                      setFundForm(
+                        (current) => ({
+                          ...current,
+                          status:
+                            event.target.value,
+                        })
+                      )
+                    }
+                  >
+
+                    <option value="draft">
+                      Draft
+                    </option>
+
+                    <option value="active">
+                      Active
+                    </option>
+
+                    <option value="completed">
+                      Completed
+                    </option>
+
+                    <option value="closed">
+                      Closed
+                    </option>
+
+                  </select>
+
+                </div>
+
+
+                <div className="form-field">
+
+                  <label>
+                    Start Date
+                  </label>
 
                   <input
                     type="date"
-                    value={fundForm.startDate}
+                    value={
+                      fundForm.startDate
+                    }
                     onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
-                        startDate: event.target.value,
-                      }))
+                      setFundForm(
+                        (current) => ({
+                          ...current,
+                          startDate:
+                            event.target.value,
+                        })
+                      )
                     }
                   />
+
                 </div>
 
-                <div className="form-field">
-                  <label>End Date</label>
-
-                  <input
-                    type="date"
-                    value={fundForm.endDate}
-                    onChange={(event) =>
-                      setFundForm((current) => ({
-                        ...current,
-                        endDate: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
               </div>
 
+
               <div className="form-field">
-                <label>Description</label>
+
+                <label>
+                  End Date
+                </label>
+
+                <input
+                  type="date"
+                  value={
+                    fundForm.endDate
+                  }
+                  onChange={(event) =>
+                    setFundForm(
+                      (current) => ({
+                        ...current,
+                        endDate:
+                          event.target.value,
+                      })
+                    )
+                  }
+                />
+
+              </div>
+
+
+              <div className="form-field">
+
+                <label>
+                  Description
+                </label>
 
                 <textarea
                   rows="4"
-                  value={fundForm.description}
+                  value={
+                    fundForm.description
+                  }
                   onChange={(event) =>
-                    setFundForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
+                    setFundForm(
+                      (current) => ({
+                        ...current,
+                        description:
+                          event.target.value,
+                      })
+                    )
                   }
                   placeholder="Describe the purpose of this fund..."
                 />
+
               </div>
 
+
               <div className="fund-modal-actions">
+
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setShowFundModal(false)}
-                  disabled={savingFund}
+                  onClick={() =>
+                    setShowFundModal(
+                      false
+                    )
+                  }
+                  disabled={
+                    savingFund
+                  }
                 >
                   Cancel
                 </button>
 
+
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={savingFund}
+                  disabled={
+                    savingFund
+                  }
                 >
-                  {savingFund
-                    ? "Saving..."
-                    : editingFund
-                      ? "Save Changes"
-                      : "Create Fund"}
+                  {
+                    savingFund
+                      ? "Saving..."
+                      : editingFund
+                        ? "Save Changes"
+                        : "Create Fund"
+                  }
                 </button>
+
               </div>
+
             </form>
+
           </div>
+
         </div>
+
       )}
+
 
       {/* ========================================
           CATEGORY MODAL
       ======================================== */}
 
       {showCategoryModal && (
+
         <div className="fund-modal-overlay">
+
           <div className="fund-modal small">
+
             <button
               type="button"
               className="fund-modal-close"
-              onClick={() => setShowCategoryModal(false)}
-              disabled={savingCategory}
+              onClick={() =>
+                setShowCategoryModal(
+                  false
+                )
+              }
+              disabled={
+                savingCategory
+              }
             >
               ×
             </button>
 
-            <p className="section-label">FUND STRUCTURE</p>
 
-            <h2>{editingCategory ? "Edit Category" : "Add Category"}</h2>
+            <p className="section-label">
+              FUND TYPES
+            </p>
 
-            <form onSubmit={saveCategory}>
+
+            <h2>
+              {
+                editingCategory
+                  ? "Edit Income Category"
+                  : "Add Income Category"
+              }
+            </h2>
+
+
+            <p className="fund-modal-intro">
+              Add a reusable income or donation
+              type under a specific fund.
+            </p>
+
+
+            <form
+              onSubmit={
+                saveCategory
+              }
+            >
+
               <div className="form-field">
-                <label>Category Name</label>
+
+                <label>
+                  Fund
+                </label>
+
+                <select
+                  value={
+                    categoryForm.fundId
+                  }
+                  onChange={(event) =>
+                    setCategoryForm(
+                      (current) => ({
+                        ...current,
+                        fundId:
+                          event.target.value,
+                      })
+                    )
+                  }
+                  required
+                >
+
+                  <option value="">
+                    Select fund
+                  </option>
+
+
+                  <optgroup label="Masjid Funds">
+
+                    {funds
+                      .filter(
+                        (fund) =>
+                          fund.include_in_masjid_totals !==
+                          false
+                      )
+                      .map(
+                        (fund) => (
+                          <option
+                            key={
+                              fund.id
+                            }
+                            value={
+                              fund.id
+                            }
+                          >
+                            {
+                              fund.name
+                            }
+                          </option>
+                        )
+                      )}
+
+                  </optgroup>
+
+
+                  <optgroup label="Separate Funds">
+
+                    {funds
+                      .filter(
+                        (fund) =>
+                          fund.include_in_masjid_totals ===
+                          false
+                      )
+                      .map(
+                        (fund) => (
+                          <option
+                            key={
+                              fund.id
+                            }
+                            value={
+                              fund.id
+                            }
+                          >
+                            {
+                              fund.name
+                            }
+                          </option>
+                        )
+                      )}
+
+                  </optgroup>
+
+                </select>
+
+              </div>
+
+
+              <div className="form-field">
+
+                <label>
+                  Category / Income Type
+                </label>
 
                 <input
                   type="text"
-                  value={categoryForm.name}
-                  onChange={(event) =>
-                    setCategoryForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
+                  value={
+                    categoryForm.name
                   }
-                  placeholder="e.g. Reconstruction"
+                  onChange={(event) =>
+                    setCategoryForm(
+                      (current) => ({
+                        ...current,
+                        name:
+                          event.target.value,
+                      })
+                    )
+                  }
+                  placeholder="e.g. Madrasa Fees"
                   required
                 />
+
               </div>
 
+
               <div className="form-field">
-                <label>Description</label>
+
+                <label>
+                  Description
+                </label>
 
                 <textarea
                   rows="4"
-                  value={categoryForm.description}
-                  onChange={(event) =>
-                    setCategoryForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
+                  value={
+                    categoryForm.description
                   }
-                  placeholder="Describe this category..."
+                  onChange={(event) =>
+                    setCategoryForm(
+                      (current) => ({
+                        ...current,
+                        description:
+                          event.target.value,
+                      })
+                    )
+                  }
+                  placeholder="Optional description..."
                 />
+
               </div>
 
+
               <div className="category-modal-status">
+
                 <div>
-                  <strong>Category Status</strong>
+
+                  <strong>
+                    Category Status
+                  </strong>
 
                   <p>
-                    Inactive categories won't be available when creating new
-                    funds.
+                    Inactive categories will
+                    no longer appear when
+                    recording new income.
                   </p>
+
                 </div>
+
 
                 <button
                   type="button"
@@ -1914,233 +2999,418 @@ function Funds() {
                       : "user-status-toggle inactive"
                   }
                   onClick={() =>
-                    setCategoryForm((current) => ({
-                      ...current,
-                      isActive: !current.isActive,
-                    }))
+                    setCategoryForm(
+                      (current) => ({
+                        ...current,
+                        isActive:
+                          !current.isActive,
+                      })
+                    )
                   }
                 >
+
                   <span />
 
-                  {categoryForm.isActive ? "Active" : "Inactive"}
+                  {
+                    categoryForm.isActive
+                      ? "Active"
+                      : "Inactive"
+                  }
+
                 </button>
+
               </div>
 
+
               <div className="fund-modal-actions">
+
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setShowCategoryModal(false)}
-                  disabled={savingCategory}
+                  onClick={() =>
+                    setShowCategoryModal(
+                      false
+                    )
+                  }
+                  disabled={
+                    savingCategory
+                  }
                 >
                   Cancel
                 </button>
 
+
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={savingCategory}
+                  disabled={
+                    savingCategory
+                  }
                 >
-                  {savingCategory
-                    ? "Saving..."
-                    : editingCategory
-                      ? "Save Changes"
-                      : "Create Category"}
+                  {
+                    savingCategory
+                      ? "Saving..."
+                      : editingCategory
+                        ? "Save Changes"
+                        : "Create Category"
+                  }
                 </button>
+
               </div>
+
             </form>
+
           </div>
+
         </div>
+
       )}
+
 
       {/* ========================================
           TRANSFER MODAL
       ======================================== */}
 
       {showTransferModal && (
+
         <div className="fund-modal-overlay">
+
           <div className="fund-modal">
+
             <button
               type="button"
               className="fund-modal-close"
-              onClick={() => setShowTransferModal(false)}
-              disabled={savingTransfer}
+              onClick={() =>
+                setShowTransferModal(
+                  false
+                )
+              }
+              disabled={
+                savingTransfer
+              }
             >
               ×
             </button>
 
-            <p className="section-label">FUND MOVEMENT</p>
+
+            <p className="section-label">
+              FUND MOVEMENT
+            </p>
+
 
             <h2>
-              {editingTransfer
-                ? "Edit Fund Transfer"
-                : "Transfer Between Funds"}
+              {
+                editingTransfer
+                  ? "Edit Fund Transfer"
+                  : "Transfer Between Funds"
+              }
             </h2>
 
+
             <p className="fund-modal-intro">
-              This moves existing money from one fund to another. It does not
+              This moves existing money from
+              one fund to another. It does not
               create income or an expense.
             </p>
 
-            <form onSubmit={saveTransfer}>
+
+            <form
+              onSubmit={
+                saveTransfer
+              }
+            >
+
               <div className="fund-transfer-route">
+
                 <div className="form-field">
-                  <label>From Fund</label>
+
+                  <label>
+                    From Fund
+                  </label>
 
                   <select
-                    value={transferForm.fromFundId}
+                    value={
+                      transferForm.fromFundId
+                    }
                     onChange={(event) =>
-                      setTransferForm((current) => ({
-                        ...current,
-                        fromFundId: event.target.value,
-                      }))
+                      setTransferForm(
+                        (current) => ({
+                          ...current,
+                          fromFundId:
+                            event.target.value,
+                        })
+                      )
                     }
                     required
                   >
-                    <option value="">Select source fund</option>
 
-                    {activeFunds.map((fund) => (
-                      <option key={fund.id} value={fund.id}>
-                        {fund.name} — {formatCurrency(fund.balance)}
-                      </option>
-                    ))}
+                    <option value="">
+                      Select source fund
+                    </option>
+
+                    {activeFunds.map(
+                      (fund) => (
+
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {fund.name}
+                          {" — "}
+                          {
+                            formatCurrency(
+                              fund.balance
+                            )
+                          }
+                        </option>
+
+                      )
+                    )}
+
                   </select>
+
                 </div>
 
-                <div className="fund-transfer-arrow">→</div>
+
+                <div className="fund-transfer-arrow">
+                  →
+                </div>
+
 
                 <div className="form-field">
-                  <label>To Fund</label>
+
+                  <label>
+                    To Fund
+                  </label>
 
                   <select
-                    value={transferForm.toFundId}
+                    value={
+                      transferForm.toFundId
+                    }
                     onChange={(event) =>
-                      setTransferForm((current) => ({
-                        ...current,
-                        toFundId: event.target.value,
-                      }))
+                      setTransferForm(
+                        (current) => ({
+                          ...current,
+                          toFundId:
+                            event.target.value,
+                        })
+                      )
                     }
                     required
                   >
-                    <option value="">Select destination fund</option>
 
-                    {activeFunds.map((fund) => (
-                      <option key={fund.id} value={fund.id}>
-                        {fund.name}
-                      </option>
-                    ))}
+                    <option value="">
+                      Select destination fund
+                    </option>
+
+                    {activeFunds.map(
+                      (fund) => (
+
+                        <option
+                          key={
+                            fund.id
+                          }
+                          value={
+                            fund.id
+                          }
+                        >
+                          {
+                            fund.name
+                          }
+                        </option>
+
+                      )
+                    )}
+
                   </select>
+
                 </div>
+
               </div>
 
+
               <div className="form-field">
-                <label>Amount</label>
+
+                <label>
+                  Amount
+                </label>
 
                 <div className="currency-input">
-                  <span>₹</span>
+
+                  <span>
+                    ₹
+                  </span>
 
                   <input
                     type="number"
                     min="1"
                     step="0.01"
-                    value={transferForm.amount}
+                    value={
+                      transferForm.amount
+                    }
                     onChange={(event) =>
-                      setTransferForm((current) => ({
-                        ...current,
-                        amount: event.target.value,
-                      }))
+                      setTransferForm(
+                        (current) => ({
+                          ...current,
+                          amount:
+                            event.target.value,
+                        })
+                      )
                     }
                     placeholder="0.00"
                     required
                   />
+
                 </div>
+
 
                 {selectedSourceFund && (
                   <small className="fund-available-note">
-                    Available: {formatCurrency(selectedSourceFund.balance)}
+                    Available:{" "}
+                    {
+                      formatCurrency(
+                        selectedSourceFund.balance
+                      )
+                    }
                   </small>
                 )}
+
               </div>
 
+
               <div className="fund-modal-grid">
+
                 <div className="form-field">
-                  <label>Transfer Date</label>
+
+                  <label>
+                    Transfer Date
+                  </label>
 
                   <input
                     type="date"
-                    value={transferForm.transferDate}
+                    value={
+                      transferForm.transferDate
+                    }
                     onChange={(event) =>
-                      setTransferForm((current) => ({
-                        ...current,
-                        transferDate: event.target.value,
-                      }))
+                      setTransferForm(
+                        (current) => ({
+                          ...current,
+                          transferDate:
+                            event.target.value,
+                        })
+                      )
                     }
                     required
                   />
+
                 </div>
 
+
                 <div className="form-field">
-                  <label>Reference Number</label>
+
+                  <label>
+                    Reference Number
+                  </label>
 
                   <input
                     type="text"
-                    value={transferForm.referenceNumber}
+                    value={
+                      transferForm.referenceNumber
+                    }
                     onChange={(event) =>
-                      setTransferForm((current) => ({
-                        ...current,
-                        referenceNumber: event.target.value,
-                      }))
+                      setTransferForm(
+                        (current) => ({
+                          ...current,
+                          referenceNumber:
+                            event.target.value,
+                        })
+                      )
                     }
                     placeholder="Optional"
                   />
+
                 </div>
+
               </div>
 
+
               <div className="form-field">
-                <label>Reason</label>
+
+                <label>
+                  Reason
+                </label>
 
                 <textarea
                   rows="4"
-                  value={transferForm.reason}
+                  value={
+                    transferForm.reason
+                  }
                   onChange={(event) =>
-                    setTransferForm((current) => ({
-                      ...current,
-                      reason: event.target.value,
-                    }))
+                    setTransferForm(
+                      (current) => ({
+                        ...current,
+                        reason:
+                          event.target.value,
+                      })
+                    )
                   }
                   placeholder="Why is this money being transferred?"
                   required
                 />
+
               </div>
 
+
               <div className="fund-modal-actions">
+
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setShowTransferModal(false)}
-                  disabled={savingTransfer}
+                  onClick={() =>
+                    setShowTransferModal(
+                      false
+                    )
+                  }
+                  disabled={
+                    savingTransfer
+                  }
                 >
                   Cancel
                 </button>
 
+
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={savingTransfer}
+                  disabled={
+                    savingTransfer
+                  }
                 >
-                  {savingTransfer
-                    ? editingTransfer
-                      ? "Saving..."
-                      : "Recording..."
-                    : editingTransfer
-                      ? "Save Changes"
-                      : "Record Transfer"}
+                  {
+                    savingTransfer
+                      ? editingTransfer
+                        ? "Saving..."
+                        : "Recording..."
+                      : editingTransfer
+                        ? "Save Changes"
+                        : "Record Transfer"
+                  }
                 </button>
+
               </div>
+
             </form>
+
           </div>
+
         </div>
+
       )}
+
     </div>
   );
 }
