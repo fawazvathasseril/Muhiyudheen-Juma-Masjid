@@ -477,23 +477,6 @@ function TransactionDetails() {
 
 
     if (
-      transaction.type === "expense" &&
-      !expensePurpose
-    ) {
-
-      setError(
-        "Please enter what this expense was for."
-      );
-
-      setSaving(
-        false
-      );
-
-      return;
-    }
-
-
-    if (
       transaction.type === "income" &&
       !form.category.trim()
     ) {
@@ -529,7 +512,10 @@ function TransactionDetails() {
 
             category:
               transaction.type === "expense"
-                ? expensePurpose
+                ? (
+                    expensePurpose ||
+                    null
+                  )
                 : form.category.trim(),
 
             description:
@@ -1142,7 +1128,6 @@ function TransactionDetails() {
                     list="expense-purpose-suggestions"
                     placeholder="e.g. Electricity bill, plumbing work, tiles..."
                     autoComplete="off"
-                    required
                   />
 
                   <datalist
